@@ -1,0 +1,265 @@
+From 29e6df3db77234a44a680344a61eb5bd735f6d8e Mon Sep 17 00:00:00 2001
+From: Andrey Vagin <avagin@openvz.org>
+Date: Mon, 16 Feb 2015 19:20:52 +0300
+Subject: [PATCH 0/15] task_diag: add a new interface to get information
+ about processes (v3)
+
+Current interface is a bunch of files in /proc/PID. While this appears to be
+simple and there are a number of problems with it.
+
+* Lots of syscalls
+
+  At least three syscalls per each PID are required — open(), read(), and
+  close()
+
+* Variety of formats
+
+  There are many different formats used by files in /proc/PID/ hierarchy.
+  Therefore, there is a need to write parser for each such format.
+
+* Non-extendable formats
+
+  Some formats in /proc/PID are non-extendable. For example, /proc/PID/maps
+  last column (file name) is optional, therefore there is no way to add more
+  columns without breaking the format.
+
+* Slow read due to extra info[edit]
+  Sometimes getting information is slow due to extra attributes that are not
+  always needed. For example, /proc/PID/smaps contains VmFlags field (which
+  can't be added to /proc/PID/maps, see previous item), but it also contains
+  page stats that take long time to generate.
+
+	$ time cat /proc/*/maps > /dev/null
+	real	0m0.061s
+	user	0m0.002s
+	sys	0m0.059s
+
+
+	$ time cat /proc/*/smaps > /dev/null
+	real	0m0.253s
+	user	0m0.004s
+	sys	0m0.247s
+
+Proposed solution
+-----------------
+
+The proposed solution is the /proc/task_diag file, which operates based on the
+following principles:
+
+* Transactional: write request, read response
+* Netlink message format (same as used by sock_diag; binary and extendable)
+* Ability to specify a set of processes to get info about
+* Optimal grouping of attributes
+  Any attribute in a group can't affect a response time
+
+The user-kernel interface is encapsulated in include/uapi/linux/task_diag.h
+
+A request is described by the task_diag_pid structure:
+
+struct task_diag_pid {
+       __u64   show_flags;	/* specify which information are required */
+       __u64   dump_stratagy;   /* specify a group of processes */
+
+       __u32   pid;
+};
+
+dump_stratagy specifies a group of processes:
+/* system wide strategies (the pid fiel is ignored) */
+TASK_DIAG_DUMP_ALL	  - all processes
+TASK_DIAG_DUMP_ALL_THREAD - all threads
+/* per-process strategies */
+TASK_DIAG_DUMP_CHILDREN	 - all children
+TASK_DIAG_DUMP_THREAD	 - all threads
+TASK_DIAG_DUMP_ONE	 - one process
+
+show_flags specifies which information are required.  If we set the
+TASK_DIAG_SHOW_BASE flag, the response message will contain the TASK_DIAG_BASE
+attribute which is described by the task_diag_base structure.
+
+struct task_diag_base {
+	__u32	tgid;
+	__u32	pid;
+	__u32	ppid;
+	__u32	tpid;
+	__u32	sid;
+	__u32	pgid;
+	__u8	state;
+	char	comm[TASK_DIAG_COMM_LEN];
+};
+
+In future, it can be extended by optional attributes. The request describes
+which task properties are required and for which processes they are required
+for.
+
+A response can be divided into a few netlink packets. Each task is described
+by a netlink message. If all information about a process doesn't fit into a
+message, the TASK_DIAG_FLAG_CONT flag will be set and the next message will
+continue describing the same process.
+
+The task diag is much faster than the proc file system. We don't need to create
+a new file descriptor for each task. We need to send a request and get a
+response. It allows to get information for a few tasks for one request-response
+iteration.
+
+As for security, task_diag always works as procfs with hidepid = 2 (highest
+level of security).
+
+I have compared performance of procfs and task-diag for the
+"ps ax -o pid,ppid" command.
+
+ps uses /proc/PID/* files:
+$ time ./ps/pscommand ax | wc -l
+50089
+
+real    0m1.596s
+user    0m0.475s
+sys     0m1.126s
+
+ps uses the task_diag interface
+$ time ./ps/pscommand ax | wc -l
+50089
+
+real    0m0.148s
+user    0m0.069s
+sys     0m0.086s
+
+Read /proc/PID/stat for 30K tasks:
+$ time ./task_proc_all > /dev/null
+
+real	0m0.258s
+user	0m0.019s
+sys	0m0.232s
+
+Get the same information via task_diag:
+$ time ./task_diag_all > /dev/null
+
+real	0m0.052s
+user	0m0.013s
+sys	0m0.036s
+
+And here are statistics on syscalls which were called by each
+command.
+
+$ perf trace -s -o log -- ./task_proc_all > /dev/null
+
+ Summary of events:
+
+ task_proc_all (30781), 180785 events, 100.0%, 0.000 msec
+
+   syscall            calls      min       avg       max      stddev
+                               (msec)    (msec)    (msec)        (%)
+   --------------- -------- --------- --------- ---------     ------
+   read               30111     0.000     0.013     0.107      0.21%
+   write                  1     0.008     0.008     0.008      0.00%
+   open               30111     0.007     0.012     0.145      0.24%
+   close              30112     0.004     0.011     0.110      0.20%
+   fstat                  3     0.009     0.013     0.016     16.15%
+   mmap                   8     0.011     0.020     0.027     11.24%
+   mprotect               4     0.019     0.023     0.028      8.33%
+   munmap                 1     0.026     0.026     0.026      0.00%
+   brk                    8     0.007     0.015     0.024     11.94%
+   ioctl                  1     0.007     0.007     0.007      0.00%
+   access                 1     0.019     0.019     0.019      0.00%
+   execve                 1     0.000     0.000     0.000      0.00%
+   getdents              29     0.008     1.010     2.215      8.88%
+   arch_prctl             1     0.016     0.016     0.016      0.00%
+   openat                 1     0.021     0.021     0.021      0.00%
+
+
+$ perf trace -s -o log -- ./task_diag_all > /dev/null
+ Summary of events:
+
+ task_diag_all (30762), 717 events, 98.9%, 0.000 msec
+
+   syscall            calls      min       avg       max      stddev
+                               (msec)    (msec)    (msec)        (%)
+   --------------- -------- --------- --------- ---------     ------
+   read                   2     0.000     0.008     0.016    100.00%
+   write                197     0.008     0.019     0.041      3.00%
+   open                   2     0.023     0.029     0.036     22.45%
+   close                  3     0.010     0.012     0.014     11.34%
+   fstat                  3     0.012     0.044     0.106     70.52%
+   mmap                   8     0.014     0.031     0.054     18.88%
+   mprotect               4     0.016     0.023     0.027     10.93%
+   munmap                 1     0.022     0.022     0.022      0.00%
+   brk                    1     0.040     0.040     0.040      0.00%
+   ioctl                  1     0.011     0.011     0.011      0.00%
+   access                 1     0.032     0.032     0.032      0.00%
+   getpid                 1     0.012     0.012     0.012      0.00%
+   socket                 1     0.032     0.032     0.032      0.00%
+   sendto                 2     0.032     0.095     0.157     65.77%
+   recvfrom             129     0.009     0.235     0.418      2.45%
+   bind                   1     0.018     0.018     0.018      0.00%
+   execve                 1     0.000     0.000     0.000      0.00%
+   arch_prctl             1     0.012     0.012     0.012      0.00%
+
+You can find the test programs from this experiment in tools/test/selftest/task_diag.
+
+The idea of this functionality was suggested by Pavel Emelyanov (xemul@),
+when he found that operations with /proc forms a significant part
+of a checkpointing time.
+
+Ten years ago there was attempt to add a netlink interface to access to /proc
+information:
+http://lwn.net/Articles/99600/
+
+Links
+-----
+
+kernel: https://github.com/avagin/linux-task-diag
+procps: https://github.com/avagin/procps-task-diag
+wiki: https://criu.org/Task-diag
+
+Changes from the first version:
+-------------------------------
+
+David Ahern implemented all required functionality to use task_diag in
+perf.
+
+Bellow you can find his results how it affects performance.
+> Using the fork test command:
+>    10,000 processes; 10k proc with 5 threads = 50,000 tasks
+>    reading /proc: 11.3 sec
+>    task_diag:      2.2 sec
+>
+> @7,440 tasks, reading /proc is at 0.77 sec and task_diag at 0.096
+>
+> 128 instances of sepcjbb, 80,000+ tasks:
+>     reading /proc: 32.1 sec
+>     task_diag:      3.9 sec
+>
+> So overall much snappier startup times.
+
+Many thanks to David Ahern for the help with improving task_diag.
+
+Changes from the second version:
+--------------------------------
+
+Use a proc transation file instead of the netlink interface.
+Andy Lutomirski pointed out on security problems related to netlink sockets:
+
+> Slightly off-topic, but this netlink is really rather bad as an
+> example of how fds can be used as capabilities (in the real capability
+> sense, not the Linux capabilities sense).  You call socket and get a
+> socket.  That socket captures f_cred.  Then you drop privs, and you
+> assume that the socket you're holding on to retains the right to do
+> certain things.
+>
+> This breaks pretty badly when, through things such as this patch set,
+> existing code that creates netlink sockets suddenly starts capturing
+> brand-new rights that didn't exist as part of a netlink socket before.
+
+Cc: Oleg Nesterov <oleg@redhat.com>
+Cc: Andrew Morton <akpm@linux-foundation.org>
+Cc: Cyrill Gorcunov <gorcunov@openvz.org>
+Cc: Pavel Emelyanov <xemul@parallels.com>
+Cc: Roger Luethi <rl@hellgate.ch>
+Cc: Arnd Bergmann <arnd@arndb.de>
+Cc: Arnaldo Carvalho de Melo <acme@kernel.org>
+Cc: David Ahern <dsahern@gmail.com>
+Cc: Andy Lutomirski <luto@amacapital.net>
+Cc: Pavel Odintsov <pavel.odintsov@gmail.com>
+Signed-off-by: Andrey Vagin <avagin@openvz.org>
+--
+2.1.0
+
