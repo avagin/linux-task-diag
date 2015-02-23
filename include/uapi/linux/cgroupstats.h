@@ -38,21 +38,6 @@ struct cgroupstats {
 	__u64	nr_io_wait;		/* Number of tasks waiting on IO */
 };
 
-/*
- * Commands sent from userspace
- * Not versioned. New commands should only be inserted at the enum's end
- * prior to __CGROUPSTATS_CMD_MAX
- */
-
-enum {
-	CGROUPSTATS_CMD_UNSPEC = __TASKSTATS_CMD_MAX,	/* Reserved */
-	CGROUPSTATS_CMD_GET,		/* user->kernel request/get-response */
-	CGROUPSTATS_CMD_NEW,		/* kernel->user event */
-	__CGROUPSTATS_CMD_MAX,
-};
-
-#define CGROUPSTATS_CMD_MAX (__CGROUPSTATS_CMD_MAX - 1)
-
 enum {
 	CGROUPSTATS_TYPE_UNSPEC = 0,	/* Reserved */
 	CGROUPSTATS_TYPE_CGROUP_STATS,	/* contains name + stats */
