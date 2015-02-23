@@ -177,9 +177,16 @@ enum {
 	TASKSTATS_CMD_UNSPEC = 0,	/* Reserved */
 	TASKSTATS_CMD_GET,		/* user->kernel request/get-response */
 	TASKSTATS_CMD_NEW,		/* kernel->user event */
+	__TASKSTATS_CMD_RESERVED,
+
+	CGROUPSTATS_CMD_GET,		/* user->kernel request/get-response */
+	CGROUPSTATS_CMD_NEW,		/* kernel->user event */
+
 	__TASKSTATS_CMD_MAX,
 };
 
+#define __CGROUPSTATS_CMD_MAX __TASKSTATS_CMD_MAX
+#define CGROUPSTATS_CMD_MAX (__CGROUPSTATS_CMD_MAX - 1)
 #define TASKSTATS_CMD_MAX (__TASKSTATS_CMD_MAX - 1)
 
 enum {
