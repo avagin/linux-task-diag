@@ -1,0 +1,57 @@
+The task-diag interface allows to get information about running processes
+(roughly same info that is now available from /proc/PID/* files). Compared to
+/proc/PID/* files, it is faster, more flexible and provides data in a binary
+format. Task-diag was created using the basic idea of socket_diag.
+
+Interface
+---------
+
+Here is the /proc/task-diag file, which operates based on the following
+principles:
+
+* Transactional: write request, read response
+* Netlink message format (same as used by sock_diag; binary and extendable)
+
+The user-kernel interface is encapsulated in include/uapi/linux/task_diag.h
+
+Request
+-------
+
+A request is described by the task_diag_pid structure.
+
+struct task_diag_pid {
+	__u64	show_flags;	/* TASK_DIAG_SHOW_* */
+	__u64	dump_stratagy;	/* TASK_DIAG_DUMP_* */
+
+	__u32	pid;
+};
+
+dump_stratagy specifies a group of processes:
+/* per-process strategies */
+TASK_DIAG_DUMP_CHILDREN	- all children
+TASK_DIAG_DUMP_THREAD	- all threads
+TASK_DIAG_DUMP_ONE	- one process
+/* system wide strategies (the pid fiel is ignored) */
+TASK_DIAG_DUMP_ALL	  - all processes
+TASK_DIAG_DUMP_ALL_THREAD - all threads
+
+show_flags specifies which information are required.  If we set the
+TASK_DIAG_SHOW_BASE flag, the response message will contain the TASK_DIAG_BASE
+attribute which is described by the task_diag_base structure.
+
+In future, it can be extended by optional attributes. The request describes
+which task properties are required and for which processes they are required
+for.
+
+Response
+--------
+
+A response can be divided into a few packets. Each task is described by a
+netlink message. If all information about a process doesn't fit into a message,
+the TASK_DIAG_FLAG_CONT flag will be set and the next message will continue
+describing the same process.
+
+Examples
+--------
+
+A few examples can be found in tools/testing/selftests/task_diag/
