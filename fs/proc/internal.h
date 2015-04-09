@@ -304,3 +304,6 @@ extern unsigned long task_statm(struct mm_struct *,
 				unsigned long *, unsigned long *,
 				unsigned long *, unsigned long *);
 extern void task_mem(struct seq_file *, struct mm_struct *);
+
+struct task_struct *
+task_next_child(struct task_struct *parent, struct task_struct *prev, unsigned int pos);
