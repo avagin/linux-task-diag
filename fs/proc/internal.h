@@ -307,3 +307,7 @@ extern void task_mem(struct seq_file *, struct mm_struct *);
 
 struct task_struct *
 task_next_child(struct task_struct *parent, struct task_struct *prev, unsigned int pos);
+
+struct task_struct *task_first_tid(struct pid *pid, int tid, loff_t f_pos,
+					struct pid_namespace *ns);
+struct task_struct *task_next_tid(struct task_struct *start);
