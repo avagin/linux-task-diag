@@ -661,31 +661,25 @@ int proc_pid_statm(struct seq_file *m, struct pid_namespace *ns,
 }
 
 #ifdef CONFIG_PROC_CHILDREN
-static struct pid *
-get_children_pid(struct inode *inode, struct pid *pid_prev, loff_t pos)
+struct task_struct *
+task_next_child(struct task_struct *parent, struct task_struct *prev, unsigned int pos)
 {
-	struct task_struct *start, *task;
-	struct pid *pid = NULL;
-
-	read_lock(&tasklist_lock);
-
-	start = pid_task(proc_pid(inode), PIDTYPE_PID);
-	if (!start)
-		goto out;
+	struct task_struct *task;
 
 	/*
 	 * Lets try to continue searching first, this gives
 	 * us significant speedup on children-rich processes.
 	 */
-	if (pid_prev) {
-		task = pid_task(pid_prev, PIDTYPE_PID);
-		if (task && task->real_parent == start &&
+	if (prev) {
+		task = prev;
+		if (task && task->real_parent == parent &&
 		    !(list_empty(&task->sibling))) {
-			if (list_is_last(&task->sibling, &start->children))
+			if (list_is_last(&task->sibling, &parent->children)) {
+				task = NULL;
 				goto out;
+			}
 			task = list_first_entry(&task->sibling,
 						struct task_struct, sibling);
-			pid = get_pid(task_pid(task));
 			goto out;
 		}
 	}
@@ -705,12 +699,31 @@ get_children_pid(struct inode *inode, struct pid *pid_prev, loff_t pos)
 	 * So one need to stop or freeze the leader and all
 	 * its children to get a precise result.
 	 */
-	list_for_each_entry(task, &start->children, sibling) {
-		if (pos-- == 0) {
-			pid = get_pid(task_pid(task));
-			break;
-		}
+	list_for_each_entry(task, &parent->children, sibling) {
+		if (pos-- == 0)
+			goto out;
 	}
+	task = NULL;
+out:
+	return task;
+}
+
+static struct pid *
+get_children_pid(struct inode *inode, struct pid *prev_pid, loff_t pos)
+{
+	struct task_struct *start, *task, *prev;
+	struct pid *pid = NULL;
+
+	read_lock(&tasklist_lock);
+	start = pid_task(proc_pid(inode), PIDTYPE_PID);
+	if (!start)
+		goto out;
+
+	prev = prev_pid ? pid_task(prev_pid, PIDTYPE_PID) : NULL;
+
+	task = task_next_child(start, prev, pos);
+	if (task)
+		pid = get_pid(task_pid(task));
 
 out:
 	read_unlock(&tasklist_lock);
