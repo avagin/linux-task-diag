@@ -3502,7 +3502,7 @@ out_no_task:
  * In the case of a seek we start with the leader and walk nr
  * threads past it.
  */
-static struct task_struct *first_tid(struct pid *pid, int tid, loff_t f_pos,
+struct task_struct *task_first_tid(struct pid *pid, int tid, loff_t f_pos,
 					struct pid_namespace *ns)
 {
 	struct task_struct *pos, *task;
@@ -3551,7 +3551,7 @@ out:
  *
  * The reference to the input task_struct is released.
  */
-static struct task_struct *next_tid(struct task_struct *start)
+struct task_struct *task_next_tid(struct task_struct *start)
 {
 	struct task_struct *pos = NULL;
 	rcu_read_lock();
@@ -3587,9 +3587,9 @@ static int proc_task_readdir(struct file *file, struct dir_context *ctx)
 	ns = inode->i_sb->s_fs_info;
 	tid = (int)file->f_version;
 	file->f_version = 0;
-	for (task = first_tid(proc_pid(inode), tid, ctx->pos - 2, ns);
+	for (task = task_first_tid(proc_pid(inode), tid, ctx->pos - 2, ns);
 	     task;
-	     task = next_tid(task), ctx->pos++) {
+	     task = task_next_tid(task), ctx->pos++) {
 		char name[10 + 1];
 		int len;
 		tid = task_pid_nr_ns(task, ns);
