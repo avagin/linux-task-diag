@@ -2,7 +2,7 @@
 set -o pipefail
 set -e -x
 
-./fork 1000
+./fork 1000 10
 
 nprocesses=`./task_diag_all all --maps | grep 'pid.*tgid.*ppid.*comm fork$' | wc -l`
 nthreads=`./task_diag_all All --smaps --cred | grep 'pid.*tgid.*ppid.*comm fork$' | wc -l`
@@ -12,7 +12,7 @@ nchildren=`./task_diag_all children --pid 1 | grep 'pid.*tgid.*ppid.*comm fork$'
 
 killall -9 fork
 
-[ "$nthreads"     -eq 1000 ] &&
+[ "$nthreads"     -eq 10000 ] &&
 [ "$nprocesses"   -eq 1000  ] &&
 [ "$nchildren"    -eq 1000  ] &&
 true ||  {
