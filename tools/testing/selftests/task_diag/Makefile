@@ -10,6 +10,8 @@ task_diag_comm.o: task_diag_comm.c task_diag_comm.h
 
 task_diag_all: task_diag_all.o task_diag_comm.o
 fork: fork.c
+	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $^ -lpthread
+
 task_proc_all: task_proc_all.c
 
 clean:
