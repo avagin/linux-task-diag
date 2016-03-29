@@ -108,3 +108,15 @@ config PROC_PID_ARCH_STATUS
 config PROC_CPU_RESCTRL
 	def_bool n
 	depends on PROC_FS
+
+config TASK_DIAG
+	bool "Task-diag support (/proc/task-diag)"
+	depends on NET
+	default n
+	help
+	  Export selected properties for tasks/processes through the /proc/task-diag
+	  transaction file. Unlike the proc file system, task_diag returns
+	  information in a binary format (netlink) and allows to specify which
+	  properties are required.
+
+	  Say N if unsure.
