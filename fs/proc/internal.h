@@ -331,3 +331,30 @@ task_next_child(struct task_struct *parent, struct task_struct *prev, unsigned i
 struct task_struct *task_first_tid(struct pid *pid, int tid, loff_t f_pos,
 					struct pid_namespace *ns);
 struct task_struct *task_next_tid(struct task_struct *start);
+
+struct mem_size_stats {
+	unsigned long resident;
+	unsigned long shared_clean;
+	unsigned long shared_dirty;
+	unsigned long private_clean;
+	unsigned long private_dirty;
+	unsigned long referenced;
+	unsigned long anonymous;
+	unsigned long lazyfree;
+	unsigned long anonymous_thp;
+	unsigned long shmem_thp;
+	unsigned long file_thp;
+	unsigned long swap;
+	unsigned long shared_hugetlb;
+	unsigned long private_hugetlb;
+	u64 pss;
+	u64 pss_anon;
+	u64 pss_file;
+	u64 pss_shmem;
+	u64 pss_dirty;
+	u64 pss_locked;
+	u64 swap_pss;
+};
+
+void smap_gather_stats(struct vm_area_struct *vma,
+		       struct mem_size_stats *mss, unsigned long start);
