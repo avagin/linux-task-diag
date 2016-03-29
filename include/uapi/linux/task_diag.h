@@ -153,8 +153,11 @@ struct task_diag_vma_stat *task_diag_vma_stat(struct task_diag_vma *vma)
 		(void *) vma < nla_data(attr) + nla_len(attr);	\
 		vma = (void *) vma + vma->vma_len)
 
-#define TASK_DIAG_DUMP_ALL	0
-#define TASK_DIAG_DUMP_ONE	1
+#define TASK_DIAG_DUMP_ALL		0
+#define TASK_DIAG_DUMP_ONE		1
+#define TASK_DIAG_DUMP_ALL_THREAD	2
+#define TASK_DIAG_DUMP_CHILDREN		3
+#define TASK_DIAG_DUMP_THREAD		4
 
 struct task_diag_pid {
 	__u64	show_flags;
