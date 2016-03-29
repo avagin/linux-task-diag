@@ -16,6 +16,8 @@ struct task_diag_msg {
 enum {
 	TASK_DIAG_BASE	= 0,
 	TASK_DIAG_CRED,
+	TASK_DIAG_VMA,
+	TASK_DIAG_VMA_STAT,
 
 	__TASK_DIAG_ATTR_MAX
 #define TASK_DIAG_ATTR_MAX (__TASK_DIAG_ATTR_MAX - 1)
@@ -23,6 +25,8 @@ enum {
 
 #define TASK_DIAG_SHOW_BASE	(1ULL << TASK_DIAG_BASE)
 #define TASK_DIAG_SHOW_CRED	(1ULL << TASK_DIAG_CRED)
+#define TASK_DIAG_SHOW_VMA	(1ULL << TASK_DIAG_VMA)
+#define TASK_DIAG_SHOW_VMA_STAT	(1ULL << TASK_DIAG_VMA_STAT)
 
 enum {
 	TASK_DIAG_RUNNING,
@@ -68,6 +72,87 @@ struct task_diag_creds {
 	__u32 sgid;
 	__u32 fsgid;
 };
+
+#define TASK_DIAG_VMA_F_READ		(1ULL <<  0)
+#define TASK_DIAG_VMA_F_WRITE		(1ULL <<  1)
+#define TASK_DIAG_VMA_F_EXEC		(1ULL <<  2)
+#define TASK_DIAG_VMA_F_SHARED		(1ULL <<  3)
+#define TASK_DIAG_VMA_F_MAYREAD		(1ULL <<  4)
+#define TASK_DIAG_VMA_F_MAYWRITE	(1ULL <<  5)
+#define TASK_DIAG_VMA_F_MAYEXEC		(1ULL <<  6)
+#define TASK_DIAG_VMA_F_MAYSHARE	(1ULL <<  7)
+#define TASK_DIAG_VMA_F_GROWSDOWN	(1ULL <<  8)
+#define TASK_DIAG_VMA_F_PFNMAP		(1ULL <<  9)
+#define TASK_DIAG_VMA_F_DENYWRITE	(1ULL << 10)
+#define TASK_DIAG_VMA_F_MPX		(1ULL << 11)
+#define TASK_DIAG_VMA_F_LOCKED		(1ULL << 12)
+#define TASK_DIAG_VMA_F_IO		(1ULL << 13)
+#define TASK_DIAG_VMA_F_SEQ_READ	(1ULL << 14)
+#define TASK_DIAG_VMA_F_RAND_READ	(1ULL << 15)
+#define TASK_DIAG_VMA_F_DONTCOPY	(1ULL << 16)
+#define TASK_DIAG_VMA_F_DONTEXPAND	(1ULL << 17)
+#define TASK_DIAG_VMA_F_ACCOUNT		(1ULL << 18)
+#define TASK_DIAG_VMA_F_NORESERVE	(1ULL << 19)
+#define TASK_DIAG_VMA_F_HUGETLB		(1ULL << 20)
+#define TASK_DIAG_VMA_F_ARCH_1		(1ULL << 21)
+#define TASK_DIAG_VMA_F_DONTDUMP	(1ULL << 22)
+#define TASK_DIAG_VMA_F_SOFTDIRTY	(1ULL << 23)
+#define TASK_DIAG_VMA_F_MIXEDMAP	(1ULL << 24)
+#define TASK_DIAG_VMA_F_HUGEPAGE	(1ULL << 25)
+#define TASK_DIAG_VMA_F_NOHUGEPAGE	(1ULL << 26)
+#define TASK_DIAG_VMA_F_MERGEABLE	(1ULL << 27)
+
+struct task_diag_vma_stat {
+	__u64 resident;
+	__u64 shared_clean;
+	__u64 shared_dirty;
+	__u64 private_clean;
+	__u64 private_dirty;
+	__u64 referenced;
+	__u64 anonymous;
+	__u64 anonymous_thp;
+	__u64 swap;
+	__u64 pss;
+} __attribute__((__aligned__(NLA_ALIGNTO)));
+
+/* task_diag_vma must be NLA_ALIGN'ed */
+struct task_diag_vma {
+	__u64 start, end;
+	__u64 vm_flags;
+	__u64 pgoff;
+	__u32 major;
+	__u32 minor;
+	__u64 inode;
+	__u32 generation;
+	__u16 vma_len;
+	__u16 name_off;
+	__u16 name_len;
+	__u16 stat_off;
+	__u16 stat_len;
+} __attribute__((__aligned__(NLA_ALIGNTO)));
+
+static inline char *task_diag_vma_name(struct task_diag_vma *vma)
+{
+	if (!vma->name_len)
+		return NULL;
+
+	return ((char *)vma) + vma->name_off;
+}
+
+static inline
+struct task_diag_vma_stat *task_diag_vma_stat(struct task_diag_vma *vma)
+{
+	if (!vma->stat_len)
+		return NULL;
+
+	return ((void *)vma) + vma->stat_off;
+}
+
+#define task_diag_for_each_vma(vma, attr)			\
+	for (vma = nla_data(attr);				\
+		(void *) vma < nla_data(attr) + nla_len(attr);	\
+		vma = (void *) vma + vma->vma_len)
+
 #define TASK_DIAG_DUMP_ALL	0
 #define TASK_DIAG_DUMP_ONE	1
 
