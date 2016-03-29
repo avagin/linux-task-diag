@@ -476,11 +476,34 @@ static void iter_stop(struct task_iter *iter)
 	case TASK_DIAG_DUMP_ALL:
 		task = iter->tgid.task;
 		break;
+	case TASK_DIAG_DUMP_ALL_THREAD:
+		/* release both tgid task and thread task */
+		if (iter->task)
+			put_task_struct(iter->task);
+		task = iter->tgid.task;
+		break;
 	default:
 		task = iter->task;
 	}
 	if (task)
 		put_task_struct(task);
+}
+
+static struct task_struct *
+task_diag_next_child(struct task_struct *parent,
+			struct task_struct *prev, unsigned int pos)
+{
+	struct task_struct *task;
+
+	read_lock(&tasklist_lock);
+	task = task_next_child(parent, prev, pos);
+	if (prev)
+		put_task_struct(prev);
+	if (task)
+		get_task_struct(task);
+	read_unlock(&tasklist_lock);
+
+	return task;
 }
 
 static struct task_struct *iter_start(struct task_iter *iter)
@@ -505,11 +528,48 @@ static struct task_struct *iter_start(struct task_iter *iter)
 			iter->task = NULL;
 		return iter->task;
 
+	case TASK_DIAG_DUMP_THREAD:
+		if (iter->parent == NULL)
+			return ERR_PTR(-ESRCH);
+
+		iter->pos = iter->cb->pos;
+		iter->task = task_first_tid(task_pid(iter->parent),
+					    iter->cb->pid,iter->pos, iter->ns);
+		return iter->task;
+
+	case TASK_DIAG_DUMP_CHILDREN:
+		if (iter->parent == NULL)
+			return ERR_PTR(-ESRCH);
+
+		iter->pos = iter->cb->pos;
+		iter->task = task_diag_next_child(iter->parent, NULL, iter->pos);
+		return iter->task;
+
 	case TASK_DIAG_DUMP_ALL:
 		iter->tgid.tgid = iter->cb->pid;
 		iter->tgid.task = NULL;
 		iter->tgid = next_tgid(iter->ns, iter->tgid);
 		return iter->tgid.task;
+
+	case TASK_DIAG_DUMP_ALL_THREAD:
+		iter->pos = iter->cb->pos;
+		iter->tgid.tgid = iter->cb->pid;
+		iter->tgid.task = NULL;
+		iter->tgid = next_tgid(iter->ns, iter->tgid);
+		if (!iter->tgid.task)
+			return NULL;
+
+		iter->task = task_first_tid(task_pid(iter->tgid.task),
+						0, iter->pos, iter->ns);
+		if (!iter->task) {
+			iter->pos = 0;
+			iter->tgid.tgid += 1;
+			iter->tgid = next_tgid(iter->ns, iter->tgid);
+			iter->task = iter->tgid.task;
+			if (iter->task)
+				get_task_struct(iter->task);
+		}
+		return iter->task;
 	}
 
 	return ERR_PTR(-EINVAL);
@@ -526,11 +586,44 @@ static struct task_struct *iter_next(struct task_iter *iter)
 		iter->task = NULL;
 		return NULL;
 
+	case TASK_DIAG_DUMP_THREAD:
+		iter->pos++;
+		iter->task = task_next_tid(iter->task);
+		iter->cb->pos = iter->pos;
+		if (iter->task)
+			iter->cb->pid = task_pid_nr_ns(iter->task, iter->ns);
+		else
+			iter->cb->pid = -1;
+		return iter->task;
+	case TASK_DIAG_DUMP_CHILDREN:
+		iter->pos++;
+		iter->task = task_diag_next_child(iter->parent, iter->task, iter->pos);
+		iter->cb->pos = iter->pos;
+		return iter->task;
+
 	case TASK_DIAG_DUMP_ALL:
 		iter->tgid.tgid += 1;
 		iter->tgid = next_tgid(iter->ns, iter->tgid);
 		iter->cb->pid = iter->tgid.tgid;
 		return iter->tgid.task;
+
+	case TASK_DIAG_DUMP_ALL_THREAD:
+		iter->pos++;
+		iter->task = task_next_tid(iter->task);
+		if (!iter->task) {
+			iter->pos = 0;
+			iter->tgid.tgid += 1;
+			iter->tgid = next_tgid(iter->ns, iter->tgid);
+			iter->task = iter->tgid.task;
+			if (iter->task)
+				get_task_struct(iter->task);
+		}
+
+		/* save current position */
+		iter->cb->pid = iter->tgid.tgid;
+		iter->cb->pos = iter->pos;
+
+		return iter->task;
 	}
 
 	return NULL;
