@@ -376,30 +376,6 @@ const struct file_operations proc_pid_maps_operations = {
 #define PSS_SHIFT 12
 
 #ifdef CONFIG_PROC_PAGE_MONITOR
-struct mem_size_stats {
-	unsigned long resident;
-	unsigned long shared_clean;
-	unsigned long shared_dirty;
-	unsigned long private_clean;
-	unsigned long private_dirty;
-	unsigned long referenced;
-	unsigned long anonymous;
-	unsigned long lazyfree;
-	unsigned long anonymous_thp;
-	unsigned long shmem_thp;
-	unsigned long file_thp;
-	unsigned long swap;
-	unsigned long shared_hugetlb;
-	unsigned long private_hugetlb;
-	u64 pss;
-	u64 pss_anon;
-	u64 pss_file;
-	u64 pss_shmem;
-	u64 pss_locked;
-	u64 swap_pss;
-	bool check_shmem_swap;
-};
-
 static void smaps_page_accumulate(struct mem_size_stats *mss,
 		struct page *page, unsigned long size, unsigned long pss,
 		bool dirty, bool locked, bool private)
@@ -723,7 +699,7 @@ static const struct mm_walk_ops smaps_shmem_walk_ops = {
 	.pte_hole		= smaps_pte_hole,
 };
 
-static void smap_gather_stats(struct vm_area_struct *vma,
+void smap_gather_stats(struct vm_area_struct *vma,
 			     struct mem_size_stats *mss)
 {
 #ifdef CONFIG_SHMEM
