@@ -21,6 +21,7 @@ enum {
 	TASK_DIAG_VMA,
 	TASK_DIAG_VMA_STAT,
 	TASK_DIAG_STAT,
+	TASK_DIAG_STATM,
 
 	__TASK_DIAG_ATTR_MAX
 #define TASK_DIAG_ATTR_MAX (__TASK_DIAG_ATTR_MAX - 1)
@@ -31,6 +32,7 @@ enum {
 #define TASK_DIAG_SHOW_VMA	(1ULL << TASK_DIAG_VMA)
 #define TASK_DIAG_SHOW_VMA_STAT	(1ULL << TASK_DIAG_VMA_STAT)
 #define TASK_DIAG_SHOW_STAT	(1ULL << TASK_DIAG_STAT)
+#define TASK_DIAG_SHOW_STATM	(1ULL << TASK_DIAG_STATM)
 
 enum {
 	TASK_DIAG_RUNNING,
@@ -168,6 +170,25 @@ struct task_diag_stat {
 	__u64 cstime;
 
 	__u32 threads;
+};
+
+struct task_diag_statm {
+	__u64 anon;
+	__u64 file;
+	__u64 shmem;
+	__u64 total_vm;
+	__u64 total_rss;
+	__u64 hiwater_vm;
+	__u64 hiwater_rss;
+	__u64 text;
+	__u64 lib;
+	__u64 swap;
+	__u64 ptes;
+	__u64 pmds;
+	__u64 locked_vm;
+	__u64 pinned_vm;
+	__u64 data_vm;
+	__u64 stack_vm;
 };
 
 #define TASK_DIAG_DUMP_ALL		0
