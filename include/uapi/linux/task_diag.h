@@ -13,6 +13,8 @@ struct task_diag_msg {
 	__u32 flags;
 };
 
+#define TASK_DIAG_FLAG_CONT 0x00000001
+
 enum {
 	TASK_DIAG_BASE	= 0,
 	TASK_DIAG_CRED,
