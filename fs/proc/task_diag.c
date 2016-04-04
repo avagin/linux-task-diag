@@ -465,6 +465,77 @@ static int fill_task_stat(struct task_struct *task, struct sk_buff *skb, int who
 	return 0;
 }
 
+static int fill_task_statm(struct task_struct *task, struct sk_buff *skb, int whole)
+{
+	struct task_diag_statm *st;
+	struct nlattr *attr;
+
+	unsigned long text, lib, swap, ptes, pmds, anon, file, shmem;
+	unsigned long hiwater_vm, total_vm, hiwater_rss, total_rss;
+	unsigned long stack_vm, data_vm, locked_vm, pinned_vm;
+	struct mm_struct *mm;
+
+	mm = get_task_mm(task);
+	if (!mm)
+		return 0;
+
+	anon = get_mm_counter(mm, MM_ANONPAGES);
+	file = get_mm_counter(mm, MM_FILEPAGES);
+	shmem = get_mm_counter(mm, MM_SHMEMPAGES);
+
+	/*
+	 * Note: to minimize their overhead, mm maintains hiwater_vm and
+	 * hiwater_rss only when about to *lower* total_vm or rss.  Any
+	 * collector of these hiwater stats must therefore get total_vm
+	 * and rss too, which will usually be the higher.  Barriers? not
+	 * worth the effort, such snapshots can always be inconsistent.
+	 */
+	hiwater_vm = total_vm = mm->total_vm;
+	if (hiwater_vm < mm->hiwater_vm)
+		hiwater_vm = mm->hiwater_vm;
+	hiwater_rss = total_rss = anon + file + shmem;
+	if (hiwater_rss < mm->hiwater_rss)
+		hiwater_rss = mm->hiwater_rss;
+
+	text = (PAGE_ALIGN(mm->end_code) - (mm->start_code & PAGE_MASK)) >> PAGE_SHIFT;
+	lib = mm->exec_vm - text;
+	swap = get_mm_counter(mm, MM_SWAPENTS);
+	ptes = PTRS_PER_PTE * sizeof(pte_t) * atomic_long_read(&mm->nr_ptes);
+	pmds = PTRS_PER_PMD * sizeof(pmd_t) * mm_nr_pmds(mm);
+
+	data_vm   = mm->data_vm;
+	stack_vm  = mm->stack_vm;
+	locked_vm = mm->locked_vm;
+	pinned_vm = mm->pinned_vm;
+
+	mmput(mm);
+
+	attr = nla_reserve(skb, TASK_DIAG_STATM, sizeof(*st));
+	if (!attr)
+		return -EMSGSIZE;
+
+	st = nla_data(attr);
+
+	st->anon	= anon;
+	st->file	= file;
+	st->shmem	= shmem;
+	st->hiwater_vm	= hiwater_vm;
+	st->hiwater_rss	= hiwater_rss;
+	st->text	= text;
+	st->lib		= lib;
+	st->swap	= swap;
+	st->ptes	= ptes;
+	st->pmds	= pmds;
+	st->total_rss	= total_rss;
+	st->total_vm	= total_vm;
+	st->data_vm	= data_vm;
+	st->stack_vm	= stack_vm;
+	st->locked_vm	= locked_vm;
+	st->pinned_vm	= pinned_vm;
+
+	return 0;
+}
+
 static int task_diag_fill(struct task_struct *tsk, struct sk_buff *skb,
 			  struct task_diag_pid *req,
 			  struct task_diag_cb *cb, struct pid_namespace *pidns,
@@ -535,6 +606,14 @@ static int task_diag_fill(struct task_struct *tsk, struct sk_buff *skb,
 
 		if (i >= n)
 			err = fill_task_stat(tsk, skb, whole);
+		if (err)
+			goto err;
+		i++;
+	}
+
+	if (show_flags & TASK_DIAG_SHOW_STATM) {
+		if (i >= n)
+			err = fill_task_statm(tsk, skb, 1);
 		if (err)
 			goto err;
 		i++;
