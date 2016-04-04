@@ -20,6 +20,7 @@ enum {
 	TASK_DIAG_CRED,
 	TASK_DIAG_VMA,
 	TASK_DIAG_VMA_STAT,
+	TASK_DIAG_STAT,
 
 	__TASK_DIAG_ATTR_MAX
 #define TASK_DIAG_ATTR_MAX (__TASK_DIAG_ATTR_MAX - 1)
@@ -29,6 +30,7 @@ enum {
 #define TASK_DIAG_SHOW_CRED	(1ULL << TASK_DIAG_CRED)
 #define TASK_DIAG_SHOW_VMA	(1ULL << TASK_DIAG_VMA)
 #define TASK_DIAG_SHOW_VMA_STAT	(1ULL << TASK_DIAG_VMA_STAT)
+#define TASK_DIAG_SHOW_STAT	(1ULL << TASK_DIAG_STAT)
 
 enum {
 	TASK_DIAG_RUNNING,
@@ -154,6 +156,19 @@ struct task_diag_vma_stat *task_diag_vma_stat(struct task_diag_vma *vma)
 	for (vma = nla_data(attr);				\
 		(void *) vma < nla_data(attr) + nla_len(attr);	\
 		vma = (void *) vma + vma->vma_len)
+
+struct task_diag_stat {
+	__u64 minflt;
+	__u64 cminflt;
+	__u64 majflt;
+	__u64 cmajflt;
+	__u64 utime;
+	__u64 stime;
+	__u64 cutime;
+	__u64 cstime;
+
+	__u32 threads;
+};
 
 #define TASK_DIAG_DUMP_ALL		0
 #define TASK_DIAG_DUMP_ONE		1

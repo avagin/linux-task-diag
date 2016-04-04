@@ -387,6 +387,84 @@ err:
 	return rc;
 }
 
+static int fill_task_stat(struct task_struct *task, struct sk_buff *skb, int whole)
+{
+	struct task_diag_stat *st;
+	struct nlattr *attr;
+
+	int priority, nice;
+	int num_threads = 0;
+	unsigned long cmin_flt = 0, cmaj_flt = 0;
+	unsigned long  min_flt = 0,  maj_flt = 0;
+	cputime_t cutime, cstime, utime, stime;
+	cputime_t cgtime, gtime;
+	unsigned long flags;
+
+	attr = nla_reserve(skb, TASK_DIAG_STAT, sizeof(struct task_diag_stat));
+	if (!attr)
+		return -EMSGSIZE;
+
+	st = nla_data(attr);
+
+	cutime = cstime = utime = stime = 0;
+	cgtime = gtime = 0;
+	if (lock_task_sighand(task, &flags)) {
+		struct signal_struct *sig = task->signal;
+
+		num_threads = get_nr_threads(task);
+
+		cmin_flt = sig->cmin_flt;
+		cmaj_flt = sig->cmaj_flt;
+		cutime = sig->cutime;
+		cstime = sig->cstime;
+		cgtime = sig->cgtime;
+
+		/* add up live thread stats at the group level */
+		if (whole) {
+			struct task_struct *t = task;
+
+			do {
+				min_flt += t->min_flt;
+				maj_flt += t->maj_flt;
+				gtime += task_gtime(t);
+			} while_each_thread(task, t);
+
+			min_flt += sig->min_flt;
+			maj_flt += sig->maj_flt;
+			thread_group_cputime_adjusted(task, &utime, &stime);
+			gtime += sig->gtime;
+		}
+
+		unlock_task_sighand(task, &flags);
+	}
+
+	if (!whole) {
+		min_flt = task->min_flt;
+		maj_flt = task->maj_flt;
+		task_cputime_adjusted(task, &utime, &stime);
+		gtime = task_gtime(task);
+	}
+
+	/* scale priority and nice values from timeslices to -20..20 */
+	/* to make it look like a "normal" Unix priority/nice value  */
+	priority = task_prio(task);
+	nice = task_nice(task);
+
+
+	st->minflt	= min_flt;
+	st->cminflt	= cmin_flt;
+	st->majflt	= maj_flt;
+	st->cmajflt	= cmaj_flt;
+	st->utime	= cputime_to_clock_t(utime);
+	st->stime	= cputime_to_clock_t(stime);
+	st->cutime	= cputime_to_clock_t(cutime);
+	st->cstime	= cputime_to_clock_t(cstime);
+
+	st->threads	= num_threads;
+
+	return 0;
+}
+
 static int task_diag_fill(struct task_struct *tsk, struct sk_buff *skb,
 			  struct task_diag_pid *req,
 			  struct task_diag_cb *cb, struct pid_namespace *pidns,
@@ -443,6 +521,20 @@ static int task_diag_fill(struct task_struct *tsk, struct sk_buff *skb,
 
 		if (dump_vma && i >= n)
 			err = fill_vma(tsk, skb, cb, &progress, show_flags);
+		if (err)
+			goto err;
+		i++;
+	}
+
+	if (show_flags & TASK_DIAG_SHOW_STAT) {
+		int whole = 1;
+
+		if (req->dump_strategy == TASK_DIAG_DUMP_ALL_THREAD ||
+		    req->dump_strategy == TASK_DIAG_DUMP_THREAD)
+			whole = 0;
+
+		if (i >= n)
+			err = fill_task_stat(tsk, skb, whole);
 		if (err)
 			goto err;
 		i++;
