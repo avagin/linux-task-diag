@@ -319,6 +319,12 @@ static inline void pde_force_lookup(struct proc_dir_entry *pde)
 	pde->proc_dops = &proc_net_dentry_ops;
 }
 
+struct tgid_iter {
+	unsigned int tgid;
+	struct task_struct *task;
+};
+struct tgid_iter next_tgid(struct pid_namespace *ns, struct tgid_iter iter);
+
 struct task_struct *
 task_next_child(struct task_struct *parent, struct task_struct *prev, unsigned int pos);
 
