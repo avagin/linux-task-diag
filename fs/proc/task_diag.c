@@ -430,7 +430,17 @@ static int task_diag_fill(struct task_struct *tsk, struct sk_buff *skb,
 	}
 
 	if (show_flags & TASK_DIAG_SHOW_VMA) {
-		if (i >= n)
+		bool dump_vma = true;
+
+		/* if the request is to dump all threads of all processes
+		 * only show VMAs for group leader.
+		 */
+		if ((req->dump_strategy == TASK_DIAG_DUMP_ALL_THREAD ||
+		     req->dump_strategy == TASK_DIAG_DUMP_THREAD) &&
+		    !thread_group_leader(tsk))
+			dump_vma = false;
+
+		if (dump_vma && i >= n)
 			err = fill_vma(tsk, skb, cb, &progress, show_flags);
 		if (err)
 			goto err;
