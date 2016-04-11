@@ -6,6 +6,7 @@
 #include <linux/ptrace.h>
 #include <linux/proc_fs.h>
 #include <linux/sched.h>
+#include <linux/sched/mm.h>
 #include <linux/sched/cputime.h>
 
 #include <net/netlink.h>
@@ -540,6 +541,58 @@ static int fill_task_statm(struct task_struct *task, struct sk_buff *skb, int wh
 	return 0;
 }
 
+static int fill_task_cmdline(struct task_struct *tsk, struct sk_buff *skb)
+{
+	unsigned long arg_start, arg_end, env_start, env_end;
+	struct nlattr *attr;
+	long nr_read, len;
+	struct mm_struct *mm;
+	void *pos;
+	int rc;
+
+	mm = get_task_mm(tsk);
+	if (!mm)
+		return 0;
+
+	/* Check if process spawned far enough to have cmdline. */
+	if (!mm->env_end) {
+		rc = 0;
+		goto out_put;
+	}
+
+	spin_lock(&mm->arg_lock);
+	arg_start = mm->arg_start;
+	arg_end = mm->arg_end;
+	env_start = mm->env_start;
+	env_end = mm->env_end;
+	mmap_read_unlock(mm);
+
+	// TODO: need to sycn with get_mm_cmdline.
+	if (arg_start >= arg_end) {
+		rc = 0;
+		goto out_put;
+	}
+
+	len = arg_end - arg_start;
+
+	pos = nlmsg_get_pos(skb);
+
+	rc = -EMSGSIZE;
+	attr = nla_reserve(skb, TASK_DIAG_CMDLINE, len);
+	if (!attr)
+		goto out_put;
+
+	nr_read = access_remote_vm(mm, arg_start, nla_data(attr), len, 0);
+	// TODO: need to handle errors properly.
+	if (nr_read != len)
+		nlmsg_trim(skb, pos);
+
+	rc = 0;
+out_put:
+	mmput(mm);
+	return rc;
+}
+
 static int task_diag_fill(struct task_struct *tsk, struct sk_buff *skb,
 			  struct task_diag_pid *req,
 			  struct task_diag_cb *cb, struct pid_namespace *pidns,
@@ -618,6 +671,14 @@ static int task_diag_fill(struct task_struct *tsk, struct sk_buff *skb,
 	if (show_flags & TASK_DIAG_SHOW_STATM) {
 		if (i >= n)
 			err = fill_task_statm(tsk, skb, 1);
+		if (err)
+			goto err;
+		i++;
+	}
+
+	if (show_flags & TASK_DIAG_SHOW_CMDLINE) {
+		if (i >= n)
+			err = fill_task_cmdline(tsk, skb);
 		if (err)
 			goto err;
 		i++;
