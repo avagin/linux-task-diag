@@ -113,6 +113,19 @@ int show_task(struct nlmsghdr *hdr, void *arg)
 		}
 		break;
 
+		case TASK_DIAG_CMDLINE:
+		{
+			char *cmdline = NLA_DATA(na);
+			long i;
+
+			for (i = 0; i < nla_len(na); i++)
+				if (cmdline[i] == 0)
+					cmdline[i] = ' ';
+			cmdline[i - 1] = 0;
+			pr_info("cmdline: %s\n", cmdline);
+		}
+		break;
+
 		case TASK_DIAG_VMA:
 		{
 			struct task_diag_vma *vma_tmp, vma;
