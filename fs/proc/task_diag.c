@@ -534,6 +534,43 @@ static int fill_task_statm(struct task_struct *task, struct sk_buff *skb, int wh
 	return 0;
 }
 
+static int fill_task_cmdline(struct task_struct *tsk, struct sk_buff *skb)
+{
+	unsigned long arg_start, arg_end, env_start, env_end;
+	struct nlattr *attr;
+	long nr_read, len;
+	struct mm_struct *mm;
+	void *pos;
+
+	mm = get_task_mm(tsk);
+	if (!mm)
+		return 0;
+
+	down_read(&mm->mmap_sem);
+	arg_start = mm->arg_start;
+	arg_end = mm->arg_end;
+	env_start = mm->env_start;
+	env_end = mm->env_end;
+	up_read(&mm->mmap_sem);
+
+	BUG_ON(arg_start > arg_end);
+	BUG_ON(env_start > env_end);
+
+	len = arg_end - arg_start;
+
+	pos = nlmsg_get_pos(skb);
+
+	attr = nla_reserve(skb, TASK_DIAG_CMDLINE, len);
+	if (!attr)
+		return -EMSGSIZE;
+
+	nr_read = access_remote_vm(mm, arg_start, nla_data(attr), len, 0);
+	if (nr_read != len)
+		nlmsg_trim(skb, pos);
+
+	return 0;
+}
+
 static int task_diag_fill(struct task_struct *tsk, struct sk_buff *skb,
 			  struct task_diag_pid *req,
 			  struct task_diag_cb *cb, struct pid_namespace *pidns,
@@ -612,6 +649,14 @@ static int task_diag_fill(struct task_struct *tsk, struct sk_buff *skb,
 	if (show_flags & TASK_DIAG_SHOW_STATM) {
 		if (i >= n)
 			err = fill_task_statm(tsk, skb, 1);
+		if (err)
+			goto err;
+		i++;
+	}
+
+	if (show_flags & TASK_DIAG_SHOW_CMDLINE) {
+		if (i >= n)
+			err = fill_task_cmdline(tsk, skb);
 		if (err)
 			goto err;
 		i++;
