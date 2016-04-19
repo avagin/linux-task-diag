@@ -58,12 +58,12 @@ A request is described by the task_diag_pid structure:
 
 struct task_diag_pid {
        __u64   show_flags;	/* specify which information are required */
-       __u64   dump_stratagy;   /* specify a group of processes */
+       __u64   dump_strategy;   /* specify a group of processes */
 
        __u32   pid;
 };
 
-dump_stratagy specifies a group of processes:
+dump_strategy specifies a group of processes:
 /* system wide strategies (the pid fiel is ignored) */
 TASK_DIAG_DUMP_ALL	  - all processes
 TASK_DIAG_DUMP_ALL_THREAD - all threads
