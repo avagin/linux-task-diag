@@ -1,0 +1,42 @@
+From 15b59c0324ef713bb366fdd8f9cfa1ce89fc8c0f Mon Sep 17 00:00:00 2001
+From: Andrey Vagin <avagin@openvz.org>
+Date: Fri, 10 Jun 2016 16:42:00 -0700
+Subject: [PATCH net-next 0/3] [RFC]  netlink: prepare to dump and restore data from a receive queue
+
+CRIU can dump queued data for unix and tcp sockets,
+now it's time for netlink sockets.
+
+Here are there questions.
+* How to dump data from a receive queue
+  We can set peeking offset like we do for unix sockets.
+
+* How to restore data back to a receive queue
+  I suggest to add a repair mode like we do for tcp sockets.
+
+* When we can dump data from a receive queue.
+  I think we can do this only if a socket doesn't have a running callback.
+
+Cc: Pavel Emelyanov <xemul@virtuozzo.com>
+Cc: "David S. Miller" <davem@davemloft.net>
+Cc: Ken-ichirou MATSUZAWA <chamaken@gmail.com>
+Cc: Daniel Borkmann <daniel@iogearbox.net>
+Cc: Florian Westphal <fw@strlen.de>
+Cc: Herbert Xu <herbert@gondor.apana.org.au>
+Cc: David Herrmann <dh.herrmann@gmail.com>
+Cc: Christophe Ricard <christophe.ricard@gmail.com>
+
+Andrey Vagin (3):
+  netlink: allow to set peeking offset for sockets
+  netlink: add an ability to restore messages in a receive queue
+  netlink/diag: report flags for netlink sockets
+
+ include/uapi/linux/netlink.h      |  1 +
+ include/uapi/linux/netlink_diag.h | 10 +++++
+ net/netlink/af_netlink.c          | 82 ++++++++++++++++++++++++++-------------
+ net/netlink/af_netlink.h          |  9 +++++
+ net/netlink/diag.c                | 25 ++++++++++++
+ 5 files changed, 99 insertions(+), 28 deletions(-)
+
+-- 
+2.5.5
+
