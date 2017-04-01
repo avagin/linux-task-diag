@@ -1894,7 +1894,7 @@ static int netlink_recvmsg(struct socket *sock, struct msghdr *msg, size_t len,
 	copied = 0;
 	skip = sk_peek_offset(sk, flags);
 
-	skb = __skb_recv_datagram(sk, flags, &peeked, &skip, &err);
+	skb = __skb_recv_datagram(sk, flags, NULL, &peeked, &skip, &err);
 	if (skb == NULL)
 		goto out;
 
