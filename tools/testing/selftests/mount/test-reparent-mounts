@@ -1,0 +1,92 @@
+#!/bin/sh
+
+# This test checks two following behaviour cases:
+#
+# When a mount is propagated to a place which is already busy, the new mount is
+# inserted between parent and old mount.
+#
+# When a mount that is being unmounted due to propagation has another mount on
+# top of it, it is replaced by the top mount.
+
+ITER=3
+
+set -e
+
+usage()
+{
+	echo " ./$0 [OPTIONS]
+This test checks a case when a mount has to be propagated under another mount.
+	-c - create a mount which is visible only from the second tree
+	-s - make a second tree as a slave to the first one
+	-S - create a sub-mount when the send tree is a slave to the first one
+	-i - how many times to call mount
+"
+}
+
+while getopts "csi:hS" opt; do
+   case $opt in
+   c )  with_child=1;;
+   s )  make_slave=1;;
+   S )  slave_child=1;;
+   i )  ITER=$OPTARG;;
+   h )  usage; exit 0 ;;
+   esac
+done
+
+shift $(($OPTIND - 1))
+
+if [ -n "$1" ]; then
+	usage
+	exit 1
+fi
+
+mount -t tmpfs test /mnt
+mkdir /mnt/main
+mkdir /mnt/second
+mount --bind /mnt/main /mnt/main
+mount --make-shared /mnt/main
+mount --bind /mnt/main /mnt/second
+mkdir -p /mnt/main/sub
+
+if [ -n "$make_slave" ]; then
+	mount --make-slave /mnt/second
+	if [ -n "slave_child" ]; then
+		mount -t tmpfs slave_child /mnt/second/sub/
+		touch /mnt/second/sub/slave_child
+	fi
+fi
+
+if [ -n "$make_slave" ]; then
+	mount --make-slave /mnt/second
+	if [ -n "$slave_child" ]; then
+		mount -t tmpfs test_slave /mnt/second/sub/
+		touch /mnt/second/sub/slave_child
+	fi
+fi
+
+for i in `seq $ITER`; do
+	mount --bind /mnt/main/sub /mnt/main/sub
+done
+
+if [ -n "$with_child" ]; then
+	mkdir /mnt/second/sub/child
+	mount --make-private /mnt/second/sub
+	mount --bind /mnt/second/sub/child /mnt/second/sub/child
+fi
+if [ -n "$slave_child" ]; then
+	test -f /mnt/second/sub/slave_child
+fi
+
+umount /mnt/main/sub
+
+if [ -n "$with_child" ]; then
+	umount /mnt/second/sub/child
+	umount /mnt/second/sub
+fi
+if [ -n "$slave_child" ]; then
+	test -f /mnt/second/sub/slave_child
+	umount /mnt/second/sub
+fi
+
+umount /mnt/second
+umount /mnt/main
