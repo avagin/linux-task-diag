@@ -550,6 +550,9 @@ asmlinkage long compat_sys_getdents(unsigned int fd,
 				    unsigned int count);
 asmlinkage long compat_sys_vmsplice(int fd, const struct compat_iovec __user *,
 				    unsigned int nr_segs, unsigned int flags);
+asmlinkage long compat_sys_process_vmsplice(pid_t pid, int fd,
+				    const struct compat_iovec __user *,
+				    unsigned int nr_segs, unsigned int flags);
 asmlinkage long compat_sys_open(const char __user *filename, int flags,
 				umode_t mode);
 asmlinkage long compat_sys_openat(int dfd, const char __user *filename,
