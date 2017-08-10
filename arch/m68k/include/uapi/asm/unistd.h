@@ -385,5 +385,6 @@
 #define __NR_preadv2		377
 #define __NR_pwritev2		378
 #define __NR_statx		379
+#define __NR_process_vmsplice	380
 
 #endif /* _UAPI_ASM_M68K_UNISTD_H_ */

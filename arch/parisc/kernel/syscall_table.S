@@ -445,6 +445,7 @@
 	ENTRY_COMP(preadv2)
 	ENTRY_COMP(pwritev2)
 	ENTRY_SAME(statx)
+	ENTRY_SAME(process_vmsplice)
 
 
 .ifne (. - 90b) - (__NR_Linux_syscalls * (91b - 90b))

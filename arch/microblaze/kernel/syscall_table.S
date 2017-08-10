@@ -399,3 +399,4 @@ ENTRY(sys_call_table)
 	.long sys_pkey_alloc
 	.long sys_pkey_free
 	.long sys_statx
+	.long sys_process_vmsplice
