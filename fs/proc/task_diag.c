@@ -42,7 +42,7 @@ static inline const __u8 get_task_state(struct task_struct *tsk)
 {
 	BUILD_BUG_ON(1 + ilog2(TASK_REPORT_MAX) != ARRAY_SIZE(task_state_array));
 
-	return task_state_array[__get_task_state(tsk)];
+	return task_state_array[task_state_index(tsk)];
 }
 
 static int fill_task_base(struct task_struct *p,
