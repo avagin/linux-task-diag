@@ -396,8 +396,8 @@ static int fill_task_stat(struct task_struct *task, struct sk_buff *skb, int who
 	int num_threads = 0;
 	unsigned long cmin_flt = 0, cmaj_flt = 0;
 	unsigned long  min_flt = 0,  maj_flt = 0;
-	cputime_t cutime, cstime, utime, stime;
-	cputime_t cgtime, gtime;
+	u64 cutime, cstime, utime, stime;
+	u64 cgtime, gtime;
 	unsigned long flags;
 
 	attr = nla_reserve(skb, TASK_DIAG_STAT, sizeof(struct task_diag_stat));
@@ -455,10 +455,10 @@ static int fill_task_stat(struct task_struct *task, struct sk_buff *skb, int who
 	st->cminflt	= cmin_flt;
 	st->majflt	= maj_flt;
 	st->cmajflt	= cmaj_flt;
-	st->utime	= cputime_to_clock_t(utime);
-	st->stime	= cputime_to_clock_t(stime);
-	st->cutime	= cputime_to_clock_t(cutime);
-	st->cstime	= cputime_to_clock_t(cstime);
+	st->utime	= nsec_to_clock_t(utime);
+	st->stime	= nsec_to_clock_t(stime);
+	st->cutime	= nsec_to_clock_t(cutime);
+	st->cstime	= nsec_to_clock_t(cstime);
 
 	st->threads	= num_threads;
 
