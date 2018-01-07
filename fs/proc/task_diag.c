@@ -470,7 +470,7 @@ static int fill_task_statm(struct task_struct *task, struct sk_buff *skb, int wh
 	struct task_diag_statm *st;
 	struct nlattr *attr;
 
-	unsigned long text, lib, swap, ptes, pmds, anon, file, shmem;
+	unsigned long text, lib, swap, ptes, anon, file, shmem;
 	unsigned long hiwater_vm, total_vm, hiwater_rss, total_rss;
 	unsigned long stack_vm, data_vm, locked_vm, pinned_vm;
 	struct mm_struct *mm;
@@ -500,8 +500,7 @@ static int fill_task_statm(struct task_struct *task, struct sk_buff *skb, int wh
 	text = (PAGE_ALIGN(mm->end_code) - (mm->start_code & PAGE_MASK)) >> PAGE_SHIFT;
 	lib = mm->exec_vm - text;
 	swap = get_mm_counter(mm, MM_SWAPENTS);
-	ptes = PTRS_PER_PTE * sizeof(pte_t) * atomic_long_read(&mm->nr_ptes);
-	pmds = PTRS_PER_PMD * sizeof(pmd_t) * mm_nr_pmds(mm);
+	ptes = mm_pgtables_bytes(mm);
 
 	data_vm   = mm->data_vm;
 	stack_vm  = mm->stack_vm;
@@ -525,7 +524,6 @@ static int fill_task_statm(struct task_struct *task, struct sk_buff *skb, int wh
 	st->lib		= lib;
 	st->swap	= swap;
 	st->ptes	= ptes;
-	st->pmds	= pmds;
 	st->total_rss	= total_rss;
 	st->total_vm	= total_vm;
 	st->data_vm	= data_vm;

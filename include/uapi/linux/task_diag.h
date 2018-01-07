@@ -184,7 +184,6 @@ struct task_diag_statm {
 	__u64 lib;
 	__u64 swap;
 	__u64 ptes;
-	__u64 pmds;
 	__u64 locked_vm;
 	__u64 pinned_vm;
 	__u64 data_vm;
