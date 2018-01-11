@@ -12,22 +12,25 @@ int main(int argc, char **argv)
 	int fd, tasks = 0;
 	struct dirent *de;
 	char buf[4096];
+	int i = 0;
 
-	d = opendir("/proc");
-	if (d == NULL)
-		return 1;
+	for (i = 0; i < 100; i++) {
+		d = opendir("/proc");
+		if (d == NULL)
+			return 1;
 
-	while ((de = readdir(d))) {
-		if (de->d_name[0] < '0' || de->d_name[0] > '9')
-			continue;
-		snprintf(buf, sizeof(buf), "/proc/%s/stat", de->d_name);
-		fd = open(buf, O_RDONLY);
-		read(fd, buf, sizeof(buf));
-		close(fd);
-		tasks++;
+		while ((de = readdir(d))) {
+			if (de->d_name[0] < '0' || de->d_name[0] > '9')
+				continue;
+			snprintf(buf, sizeof(buf), "/proc/%s/%s", de->d_name, argv[1]);
+			fd = open(buf, O_RDONLY);
+			read(fd, buf, sizeof(buf));
+			close(fd);
+			tasks++;
+		}
+
+		closedir(d);
 	}
-
-	closedir(d);
 
 	printf("tasks: %d\n", tasks);
 
