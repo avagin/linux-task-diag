@@ -14,7 +14,7 @@ int main(int argc, char **argv)
 	char buf[4096];
 	int i = 0;
 
-	for (i = 0; i < 100; i++) {
+	for (i = 0; i < 10; i++) {
 		d = opendir("/proc");
 		if (d == NULL)
 			return 1;
