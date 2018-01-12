@@ -670,6 +670,26 @@ void seq_puts(struct seq_file *m, const char *s)
 }
 EXPORT_SYMBOL(seq_puts);
 
+static inline void seq_put_delimeter(struct seq_file *m, const char *delimiter)
+{
+	int len;
+
+	if (!delimiter || !delimiter[0])
+		return;
+
+	if (delimiter[1] == 0)
+		return seq_putc(m, delimiter[0]);
+
+	len = strlen(delimiter);
+	if (m->count + len >= m->size) {
+		seq_set_overflow(m);
+		return;
+	}
+
+	memcpy(m->buf + m->count, delimiter, len);
+	m->count += len;
+}
+
 /*
  * A helper routine for putting decimal numbers without rich format of printf().
  * only 'unsigned long long' is supported.
@@ -685,12 +705,7 @@ void seq_put_decimal_ull(struct seq_file *m, const char *delimiter,
 	if (m->count + 2 >= m->size) /* we'll write 2 bytes at least */
 		goto overflow;
 
-	len = strlen(delimiter);
-	if (m->count + len >= m->size)
-		goto overflow;
-
-	memcpy(m->buf + m->count, delimiter, len);
-	m->count += len;
+	seq_put_delimeter(m, delimiter);
 
 	if (m->count + 1 >= m->size)
 		goto overflow;
@@ -712,6 +727,46 @@ overflow:
 }
 EXPORT_SYMBOL(seq_put_decimal_ull);
 
+/**
+ * seq_put_hex_ll - print a number in hexadecimal notation
+ * @m: seq_file identifying the buffer to which data should be written
+ * @delimiter: a string which is printed before the number
+ * @v: the printed number
+ * @width: number of bytes
+ *
+ * seq_put_hex_ll(m, "", v, 8) is equal to seq_printf(m, "0x08llx", v)
+ *
+ * This routine is very quick when you show lots of numbers.
+ * In usual cases, it will be better to use seq_printf(). It's easier to read.
+ */
+void seq_put_hex_ll(struct seq_file *m, const char *delimiter, unsigned long long v, int width)
+{
+	int i, len;
+
+	seq_put_delimeter(m, delimiter);
+
+        len = __builtin_clzll(v);
+        len = (64 - len + 3) / 4;
+
+	if (unlikely(len == 0))
+		len = 1;
+
+	if (len < width)
+		len = width;
+
+	if (m->count + len > m->size)
+		goto overflow;
+
+	for (i = 0; i < len; i++) {
+		m->buf[m->count + len - 1 - i] = hex_asc[0xf & v];
+		v = v >> 4;
+	}
+	m->count += len;
+	return;
+overflow:
+	seq_set_overflow(m);
+}
+
 void seq_put_decimal_ll(struct seq_file *m, const char *delimiter, long long num)
 {
 	int len;
@@ -719,12 +774,7 @@ void seq_put_decimal_ll(struct seq_file *m, const char *delimiter, long long num
 	if (m->count + 3 >= m->size) /* we'll write 2 bytes at least */
 		goto overflow;
 
-	len = strlen(delimiter);
-	if (m->count + len >= m->size)
-		goto overflow;
-
-	memcpy(m->buf + m->count, delimiter, len);
-	m->count += len;
+	seq_put_delimeter(m, delimiter);
 
 	if (m->count + 2 >= m->size)
 		goto overflow;
