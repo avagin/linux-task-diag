@@ -485,7 +485,6 @@ spc_emulate_evpd_b0(struct se_cmd *cmd, unsigned char *buf)
 	struct se_device *dev = cmd->se_dev;
 	u32 mtl = 0;
 	int have_tp = 0, opt, min;
-	u32 block_size = dev->dev_attrib->block_size;
 
 	/*
 	 * Following spc3r22 section 6.5.3 Block Limits VPD page, when
@@ -510,7 +509,7 @@ spc_emulate_evpd_b0(struct se_cmd *cmd, unsigned char *buf)
 	 * Set OPTIMAL TRANSFER LENGTH GRANULARITY
 	 */
 	if (dev->transport->get_io_min && (min = dev->transport->get_io_min(dev)))
-		put_unaligned_be16(min / block_size, &buf[6]);
+		put_unaligned_be16(min / dev->dev_attrib.block_size, &buf[6]);
 	else
 		put_unaligned_be16(1, &buf[6]);
 
@@ -521,7 +520,8 @@ spc_emulate_evpd_b0(struct se_cmd *cmd, unsigned char *buf)
 	 * enforcing maximum HW scatter-gather-list entry limit
 	 */
 	if (cmd->se_tfo->max_data_sg_nents) {
-		mtl = (cmd->se_tfo->max_data_sg_nents * PAGE_SIZE) / block_size;
+		mtl = (cmd->se_tfo->max_data_sg_nents * PAGE_SIZE) /
+		       dev->dev_attrib.block_size;
 	}
 	put_unaligned_be32(min_not_zero(mtl, dev->dev_attrib.hw_max_sectors), &buf[8]);
 
@@ -529,7 +529,7 @@ spc_emulate_evpd_b0(struct se_cmd *cmd, unsigned char *buf)
 	 * Set OPTIMAL TRANSFER LENGTH
 	 */
 	if (dev->transport->get_io_opt && (opt = dev->transport->get_io_opt(dev)))
-		put_unaligned_be32(opt / block_size, &buf[12]);
+		put_unaligned_be32(opt / dev->dev_attrib.block_size, &buf[12]);
 	else
 		put_unaligned_be32(dev->dev_attrib.optimal_sectors, &buf[12]);
 
@@ -547,18 +547,18 @@ spc_emulate_evpd_b0(struct se_cmd *cmd, unsigned char *buf)
 	/*
 	 * Set MAXIMUM UNMAP BLOCK DESCRIPTOR COUNT
 	 */
-	put_unaligned_be32(dev->dev_attrib.max_unmap_block_desc_sectors >> (ilog2(block_size) - 9),
+	put_unaligned_be32(dev->dev_attrib.max_unmap_block_desc_count,
 			   &buf[24]);
 
 	/*
 	 * Set OPTIMAL UNMAP GRANULARITY
 	 */
-	put_unaligned_be32(dev->dev_attrib.unmap_granularity / block_size, &buf[28]);
+	put_unaligned_be32(dev->dev_attrib.unmap_granularity, &buf[28]);
 
 	/*
 	 * UNMAP GRANULARITY ALIGNMENT
 	 */
-	put_unaligned_be32(dev->dev_attrib.unmap_granularity_alignment / block_size,
+	put_unaligned_be32(dev->dev_attrib.unmap_granularity_alignment,
 			   &buf[32]);
 	if (dev->dev_attrib.unmap_granularity_alignment != 0)
 		buf[32] |= 0x80; /* Set the UGAVALID bit */
