@@ -519,6 +519,13 @@ static ssize_t _name##_show(struct config_item *item, char *page)	\
 	return snprintf(page, PAGE_SIZE, "%u\n", to_attrib(item)->_name); \
 }
 
+#define DEF_CONFIGFS_LBA_ATTRIB_SHOW(_name)					\
+static ssize_t _name##_show(struct config_item *item, char *page)	\
+{									\
+	return snprintf(page, PAGE_SIZE, "%u\n",			\
+			to_attrib(item)->_name / to_attrib(item)->block_size); \
+}
+
 DEF_CONFIGFS_ATTRIB_SHOW(emulate_model_alias);
 DEF_CONFIGFS_ATTRIB_SHOW(emulate_dpo);
 DEF_CONFIGFS_ATTRIB_SHOW(emulate_fua_write);
@@ -546,8 +553,8 @@ DEF_CONFIGFS_ATTRIB_SHOW(hw_queue_depth);
 DEF_CONFIGFS_ATTRIB_SHOW(queue_depth);
 DEF_CONFIGFS_ATTRIB_SHOW(max_unmap_lba_count);
 DEF_CONFIGFS_ATTRIB_SHOW(max_unmap_block_desc_count);
-DEF_CONFIGFS_ATTRIB_SHOW(unmap_granularity);
-DEF_CONFIGFS_ATTRIB_SHOW(unmap_granularity_alignment);
+DEF_CONFIGFS_LBA_ATTRIB_SHOW(unmap_granularity);
+DEF_CONFIGFS_LBA_ATTRIB_SHOW(unmap_granularity_alignment);
 DEF_CONFIGFS_ATTRIB_SHOW(unmap_zeroes_data);
 DEF_CONFIGFS_ATTRIB_SHOW(max_write_same_len);
 
@@ -566,10 +573,26 @@ static ssize_t _name##_store(struct config_item *item, const char *page,\
 	return count;							\
 }
 
+#define DEF_CONFIGFS_LBA_ATTRIB_STORE(_name)				\
+static ssize_t _name##_store(struct config_item *item, const char *page,\
+		size_t count)						\
+{									\
+	struct se_dev_attrib *da = to_attrib(item);			\
+	u32 val;							\
+	int ret;							\
+									\
+	ret = kstrtou32(page, 0, &val);					\
+	if (ret < 0)							\
+		return ret;						\
+	da->_name = val / to_attrib(item)->block_size;			\
+									\
+	return count;							\
+}
+
 DEF_CONFIGFS_ATTRIB_STORE_U32(max_unmap_lba_count);
 DEF_CONFIGFS_ATTRIB_STORE_U32(max_unmap_block_desc_count);
-DEF_CONFIGFS_ATTRIB_STORE_U32(unmap_granularity);
-DEF_CONFIGFS_ATTRIB_STORE_U32(unmap_granularity_alignment);
+DEF_CONFIGFS_LBA_ATTRIB_STORE(unmap_granularity);
+DEF_CONFIGFS_LBA_ATTRIB_STORE(unmap_granularity_alignment);
 DEF_CONFIGFS_ATTRIB_STORE_U32(max_write_same_len);
 
 #define DEF_CONFIGFS_ATTRIB_STORE_BOOL(_name)				\

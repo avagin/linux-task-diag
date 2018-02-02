@@ -680,7 +680,7 @@ struct se_dev_attrib {
 	u32		hw_queue_depth;
 	u32		queue_depth;
 	u32		max_unmap_lba_count;
-	u32		max_unmap_block_desc_count;
+	u32		max_unmap_block_desc_sectors;
 	u32		unmap_granularity;
 	u32		unmap_granularity_alignment;
 	u32		max_write_same_len;
