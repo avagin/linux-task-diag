@@ -719,15 +719,15 @@ EXPORT_SYMBOL(seq_put_decimal_ull);
  * @v: the number
  * @width: a minimum field width
  *
- * seq_put_hex_ll(m, "", v, 8) is equal to seq_printf(m, "0x08llx", v)
+ * seq_put_hex_ll(m, "", v, 8) is equal to seq_printf(m, "%08llx", v)
  *
  * This routine is very quick when you show lots of numbers.
  * In usual cases, it will be better to use seq_printf(). It's easier to read.
  */
 void seq_put_hex_ll(struct seq_file *m, const char *delimiter,
-				unsigned long long v, int width)
+				unsigned long long v, unsigned int width)
 {
-	int i, len;
+	unsigned int i, len;
 
 	if (delimiter && delimiter[0]) {
 		if (delimiter[1] == 0)
