@@ -651,8 +651,8 @@ int proc_pid_statm(struct seq_file *m, struct pid_namespace *ns,
 }
 
 #ifdef CONFIG_PROC_CHILDREN
-struct task_struct *
-task_next_child(struct task_struct *parent, struct task_struct *prev, unsigned int pos)
+struct task_struct *task_next_child(struct task_struct *parent,
+				struct task_struct *prev, loff_t pos)
 {
 	struct task_struct *task;
 
