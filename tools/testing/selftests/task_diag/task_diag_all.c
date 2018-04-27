@@ -48,7 +48,7 @@ int main(int argc, char *argv[])
 	int last_pid = 0;
 	int opt, idx;
 	int err, size = 0;
-	static const char short_opts[] = "p:cmslq";
+	static const char short_opts[] = "p:cmslqx";
 	static struct option long_opts[] = {
 		{ "pid",	required_argument, 0, 'p' },
 		{ "maps",	no_argument, 0, 'm' },
@@ -56,6 +56,7 @@ int main(int argc, char *argv[])
 		{ "cred",	no_argument, 0, 'c' },
 		{ "cmdline",	no_argument, 0, 'l' },
 		{ "quiet",	no_argument, 0, 'q' },
+		{ "stat",	no_argument, 0, 'x' },
 		{},
 	};
 
@@ -122,6 +123,9 @@ int main(int argc, char *argv[])
 			break;
 		case 'q':
 			quiet = 1;
+			break;
+		case 'x':
+			req->show_flags |= TASK_DIAG_SHOW_STAT;
 			break;
 		default:
 			usage(argv[0]);
