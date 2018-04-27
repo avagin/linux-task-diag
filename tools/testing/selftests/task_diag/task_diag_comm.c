@@ -174,6 +174,32 @@ int show_task(struct nlmsghdr *hdr, void *arg)
 			}
 		}
 		break;
+		case TASK_DIAG_STAT:
+		{
+			struct task_diag_stat *stat;
+			stat = NLA_DATA(na);
+
+			pr_info(
+				"minflt: %llu\n"
+				"cminflt: %llu\n"
+				"majflt: %llu\n"
+				"cmajflt: %llu\n"
+				"utime: %llu\n"
+				"stime: %llu\n"
+				"cutime: %llu\n"
+				"cstime: %llu\n"
+				"threads: %u\n",
+				stat->minflt,
+				stat->cminflt,
+				stat->majflt,
+				stat->cmajflt,
+				stat->utime,
+				stat->stime,
+				stat->cutime,
+				stat->cstime,
+				stat->threads);
+		}
+		break;
 		default:
 			pr_info("Unknown nla_type %d\n",
 				na->nla_type);
