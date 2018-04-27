@@ -16,8 +16,8 @@ struct task_diag_cb {
 	struct sk_buff		*req;
 	struct sk_buff		*resp;
 	const struct nlmsghdr	*nlh;
+	loff_t			pos;
 	pid_t			pid;
-	int			pos;
 	int			attr;
 	union { /* per-attribute */
 		struct {
@@ -689,7 +689,7 @@ struct task_iter {
 	struct task_diag_cb	*cb;
 
 	struct tgid_iter	tgid;
-	unsigned int		pos;
+	loff_t			pos;
 	struct task_struct	*task;
 };
 
@@ -719,7 +719,7 @@ static void iter_stop(struct task_iter *iter)
 
 static struct task_struct *
 task_diag_next_child(struct task_struct *parent,
-			struct task_struct *prev, unsigned int pos)
+			struct task_struct *prev, loff_t pos)
 {
 	struct task_struct *task;
 
