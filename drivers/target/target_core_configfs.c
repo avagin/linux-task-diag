@@ -1023,6 +1023,59 @@ static ssize_t queue_depth_store(struct config_item *item,
 	return count;
 }
 
+static ssize_t blkio_cgroup_show(struct config_item *item, char *page)
+{
+	struct se_dev_attrib *da = to_attrib(item);
+	struct se_device *dev = da->da_dev;
+	int rb;
+
+	read_lock(&dev->dev_attrib_lock);
+	if (dev->dev_attrib.blk_css) {
+		rb = cgroup_path(dev->dev_attrib.blk_css->cgroup,
+						page, PAGE_SIZE - 1);
+		if (rb == 0)
+			rb = strlen(page);
+		page[rb] = '\n';
+		page[rb + 1] = 0;
+		rb++;
+	} else
+		rb = 0;
+	read_unlock(&dev->dev_attrib_lock);
+
+	return rb;
+}
+
+static ssize_t blkio_cgroup_store(struct config_item *item,
+		const char *page, size_t count)
+{
+	struct se_dev_attrib *da = to_attrib(item);
+	struct se_device *dev = da->da_dev;
+	struct cgroup_subsys_state *css, *pcss;
+	int ret;
+	u32 val;
+
+	ret = kstrtou32(page, 0, &val);
+	if (ret < 0)
+		return ret;
+
+	if (val > 1)
+		return -EINVAL;
+	if (val == 1)
+		css = task_get_css(current, io_cgrp_id);
+	else
+		css = NULL;
+
+	write_lock(&dev->dev_attrib_lock);
+	pcss = dev->dev_attrib.blk_css;
+	dev->dev_attrib.blk_css = css;
+	write_unlock(&dev->dev_attrib_lock);
+
+	if (pcss)
+		css_put(pcss);
+
+	return count;
+}
+
 static ssize_t optimal_sectors_store(struct config_item *item,
 		const char *page, size_t count)
 {
@@ -1130,6 +1183,7 @@ CONFIGFS_ATTR_RO(, hw_max_sectors);
 CONFIGFS_ATTR(, optimal_sectors);
 CONFIGFS_ATTR_RO(, hw_queue_depth);
 CONFIGFS_ATTR(, queue_depth);
+CONFIGFS_ATTR(, blkio_cgroup);
 CONFIGFS_ATTR(, max_unmap_lba_count);
 CONFIGFS_ATTR(, max_unmap_block_desc_count);
 CONFIGFS_ATTR(, unmap_granularity);
@@ -1170,6 +1224,7 @@ struct configfs_attribute *sbc_attrib_attrs[] = {
 	&attr_optimal_sectors,
 	&attr_hw_queue_depth,
 	&attr_queue_depth,
+	&attr_blkio_cgroup,
 	&attr_max_unmap_lba_count,
 	&attr_max_unmap_block_desc_count,
 	&attr_unmap_granularity,
