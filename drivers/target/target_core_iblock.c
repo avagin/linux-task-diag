@@ -35,7 +35,6 @@
 #include <linux/genhd.h>
 #include <linux/file.h>
 #include <linux/module.h>
-#include <linux/cgroup.h>
 #include <scsi/scsi_proto.h>
 #include <asm/unaligned.h>
 
@@ -693,7 +692,6 @@ iblock_execute_rw(struct se_cmd *cmd, struct scatterlist *sgl, u32 sgl_nents,
 	u32 sg_num = sgl_nents;
 	unsigned bio_cnt;
 	int i, op, op_flags = 0;
-	struct cgroup_subsys_state *blk_css = NULL;
 
 	if (data_direction == DMA_TO_DEVICE) {
 		struct iblock_dev *ib_dev = IBLOCK_DEV(dev);
@@ -724,17 +722,9 @@ iblock_execute_rw(struct se_cmd *cmd, struct scatterlist *sgl, u32 sgl_nents,
 		return 0;
 	}
 
-	read_lock(&dev->dev_attrib_lock);
-	blk_css = dev->dev_attrib.blk_css;
-	if (blk_css)
-		css_get(blk_css);
-	read_unlock(&dev->dev_attrib_lock);
-
 	bio = iblock_get_bio(cmd, block_lba, sgl_nents, op, op_flags);
 	if (!bio)
 		goto fail_free_ibr;
-	if (blk_css)
-		bio_associate_blkcg(bio, blk_css);
 
 	bio_start = bio;
 	bio_list_init(&list);
@@ -760,8 +750,6 @@ iblock_execute_rw(struct se_cmd *cmd, struct scatterlist *sgl, u32 sgl_nents,
 					     op_flags);
 			if (!bio)
 				goto fail_put_bios;
-			if (blk_css)
-				bio_associate_blkcg(bio, blk_css);
 
 			refcount_inc(&ibr->pending);
 			bio_list_add(&list, bio);
@@ -781,18 +769,12 @@ iblock_execute_rw(struct se_cmd *cmd, struct scatterlist *sgl, u32 sgl_nents,
 
 	iblock_submit_bios(&list);
 	iblock_complete_cmd(cmd);
-
-	if (blk_css)
-		css_put(blk_css);
-
 	return 0;
 
 fail_put_bios:
 	while ((bio = bio_list_pop(&list)))
 		bio_put(bio);
 fail_free_ibr:
-	if (blk_css)
-		css_put(blk_css);
 	kfree(ibr);
 fail:
 	return TCM_LOGICAL_UNIT_COMMUNICATION_FAILURE;
