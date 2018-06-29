@@ -30,6 +30,11 @@
 #define CLONE_NEWNET		0x40000000	/* New network namespace */
 #define CLONE_IO		0x80000000	/* Clone io context */
 
+/* unshare specific flags */
+
+#define CLONE_NEWTIME		0x00000001 /* New time namespace. */
+
+#define CLONE_UNSHARE_FLAGS	(CLONE_NEWTIME)
 /*
  * Scheduling policies
  */
