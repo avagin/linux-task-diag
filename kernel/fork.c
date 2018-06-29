@@ -1774,6 +1774,15 @@ static __latent_entropy struct task_struct *copy_process(
 	int pidfd = -1, retval;
 	struct task_struct *p;
 	struct multiprocess_signals delayed;
+	struct nsproxy *nsp = current->nsproxy;
+	int exit_signal;
+
+	/*
+	 * Exclude clone flags which intersect with CSIGNAL and can be used
+	 * with the unshare syscall only.
+	 */
+	exit_signal = clone_flags & CSIGNAL;
+	clone_flags &= ~CSIGNAL;
 
 	/*
 	 * Don't allow sharing the root directory with processes in a different
@@ -1816,8 +1825,17 @@ static __latent_entropy struct task_struct *copy_process(
 	 */
 	if (clone_flags & CLONE_THREAD) {
 		if ((clone_flags & (CLONE_NEWUSER | CLONE_NEWPID)) ||
-		    (task_active_pid_ns(current) !=
-				current->nsproxy->pid_ns_for_children))
+		    (task_active_pid_ns(current) != nsp->pid_ns_for_children))
+			return ERR_PTR(-EINVAL);
+	}
+
+	/*
+	 * If the new process will be in a different time namespace
+	 * do not allow it to share VM or a thread group with the forking task.
+	 */
+	if (clone_flags & (CLONE_THREAD | CLONE_VM)) {
+		if ((clone_flags & CLONE_NEWTIME) ||
+		    (nsp->time_ns != nsp->time_ns_for_children))
 			return ERR_PTR(-EINVAL);
 	}
 
@@ -2106,7 +2124,7 @@ static __latent_entropy struct task_struct *copy_process(
 		if (clone_flags & CLONE_PARENT)
 			p->exit_signal = current->group_leader->exit_signal;
 		else
-			p->exit_signal = (clone_flags & CSIGNAL);
+			p->exit_signal = exit_signal;
 		p->group_leader = p;
 		p->tgid = p->pid;
 	}
@@ -2568,7 +2586,8 @@ static int check_unshare_flags(unsigned long unshare_flags)
 	if (unshare_flags & ~(CLONE_THREAD|CLONE_FS|CLONE_NEWNS|CLONE_SIGHAND|
 				CLONE_VM|CLONE_FILES|CLONE_SYSVSEM|
 				CLONE_NEWUTS|CLONE_NEWIPC|CLONE_NEWNET|
-				CLONE_NEWUSER|CLONE_NEWPID|CLONE_NEWCGROUP))
+				CLONE_NEWUSER|CLONE_NEWPID|CLONE_NEWCGROUP|
+				CLONE_NEWTIME))
 		return -EINVAL;
 	/*
 	 * Not implemented, but pretend it works if there is nothing
@@ -2578,6 +2597,8 @@ static int check_unshare_flags(unsigned long unshare_flags)
 	 */
 	if (unshare_flags & (CLONE_THREAD | CLONE_SIGHAND | CLONE_VM)) {
 		if (!thread_group_empty(current))
+			return -EINVAL;
+		if (unshare_flags & CLONE_NEWTIME)
 			return -EINVAL;
 	}
 	if (unshare_flags & (CLONE_SIGHAND | CLONE_VM)) {
