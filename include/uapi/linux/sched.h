@@ -32,6 +32,11 @@
 #define CLONE_IO		0x80000000	/* Clone io context */
 
 /*
+ * cloning flags which can be used with the unshare syscall only:
+ */
+#define CLONE_NEWTIME	0x00000080	/* New time namespace */
+
+/*
  * Scheduling policies
  */
 #define SCHED_NORMAL		0
