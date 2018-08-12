@@ -15,6 +15,7 @@
 #include <linux/cred.h>
 #include <linux/err.h>
 #include <linux/mm.h>
+#include <asm/vdso.h>
 
 ktime_t do_timens_ktime_to_host(clockid_t clockid, ktime_t tim,
 				struct timens_offsets *ns_offsets)
@@ -199,6 +200,7 @@ static void timens_put(struct ns_common *ns)
 static int timens_install(struct nsproxy *nsproxy, struct ns_common *new)
 {
 	struct time_namespace *ns = to_time_ns(new);
+	int ret;
 
 	if (!thread_group_empty(current))
 		return -EINVAL;
@@ -206,6 +208,10 @@ static int timens_install(struct nsproxy *nsproxy, struct ns_common *new)
 	if (!ns_capable(ns->user_ns, CAP_SYS_ADMIN) ||
 	    !ns_capable(current_user_ns(), CAP_SYS_ADMIN))
 		return -EPERM;
+
+	ret = vdso_join_timens(current);
+	if (ret)
+		return ret;
 
 	get_time_ns(ns);
 	get_time_ns(ns);
@@ -221,9 +227,14 @@ int timens_on_fork(struct nsproxy *nsproxy, struct task_struct *tsk)
 {
 	struct ns_common *nsc = &nsproxy->time_ns_for_children->ns;
 	struct time_namespace *ns = to_time_ns(nsc);
+	int ret;
 
 	if (nsproxy->time_ns == nsproxy->time_ns_for_children)
 		return 0;
+
+	ret = vdso_join_timens(tsk);
+	if (ret)
+		return ret;
 
 	get_time_ns(ns);
 	put_time_ns(nsproxy->time_ns);
