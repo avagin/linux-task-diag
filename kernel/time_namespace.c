@@ -14,6 +14,7 @@
 #include <linux/proc_ns.h>
 #include <linux/sched/task.h>
 #include <linux/mm.h>
+#include <asm/vdso.h>
 
 static struct ucounts *inc_time_namespaces(struct user_namespace *ns)
 {
@@ -91,8 +92,14 @@ fail:
 struct time_namespace *copy_time_ns(unsigned long flags,
 	struct user_namespace *user_ns, struct time_namespace *old_ns)
 {
+	int ret;
+
 	if (!(flags & CLONE_NEWTIME))
 		return get_time_ns(old_ns);
+
+	ret = vvar_purge_timens(current);
+	if (ret)
+		return ERR_PTR(ret);
 
 	return clone_time_ns(user_ns, old_ns);
 }
@@ -138,10 +145,15 @@ static void timens_put(struct ns_common *ns)
 static int timens_install(struct nsproxy *nsproxy, struct ns_common *new)
 {
 	struct time_namespace *ns = to_time_ns(new);
+	int ret;
 
 	if (!ns_capable(ns->user_ns, CAP_SYS_ADMIN) ||
 	    !ns_capable(current_user_ns(), CAP_SYS_ADMIN))
 		return -EPERM;
+
+	ret = vvar_purge_timens(current);
+	if (ret)
+		return ret;
 
 	get_time_ns(ns);
 	put_time_ns(nsproxy->time_ns);

@@ -25,6 +25,7 @@
 #include <asm/cpufeature.h>
 #include <asm/mshyperv.h>
 #include <asm/page.h>
+#include <asm/tlbflush.h>
 
 #if defined(CONFIG_X86_64)
 unsigned int __read_mostly vdso64_enabled = 1;
@@ -156,6 +157,36 @@ static int vvar_fault(const struct vm_special_mapping *sm,
 		return VM_FAULT_NOPAGE;
 
 	return VM_FAULT_SIGBUS;
+}
+
+static void clear_flush_timens_pte(struct mm_struct *mm, unsigned long addr)
+{
+	spinlock_t *ptl;
+	pte_t *ptep;
+
+	if (follow_pte_pmd(mm, addr, NULL, NULL, &ptep, NULL, &ptl))
+		return; /* no pte found */
+	ptep_get_and_clear(mm, addr, ptep);
+	pte_unmap_unlock(ptep, ptl);
+	flush_tlb_mm_range(mm, addr, addr + PAGE_SIZE, VM_NONE);
+}
+
+int vvar_purge_timens(struct task_struct *task)
+{
+	struct mm_struct *mm = task->mm;
+	const struct vdso_image *image;
+	unsigned long addr;
+
+	if (down_write_killable(&mm->mmap_sem))
+		return -EINTR;
+
+	image = mm->context.vdso_image;
+
+	addr = (unsigned long)mm->context.vdso + image->sym_timens_page;
+	clear_flush_timens_pte(mm, addr);
+
+	up_write(&mm->mmap_sem);
+	return 0;
 }
 
 static const struct vm_special_mapping vdso_mapping = {
