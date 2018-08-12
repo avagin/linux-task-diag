@@ -38,6 +38,9 @@ static inline void put_time_ns(struct time_namespace *ns)
 	kref_put(&ns->kref, free_time_ns);
 }
 
+void timens_clock_to_host(int clockid, struct timespec64 *val);
+void timens_clock_from_host(int clockid, struct timespec64 *val);
+
 #else
 static inline void get_time_ns(struct time_namespace *ns)
 {
@@ -54,6 +57,14 @@ static inline struct time_namespace *copy_time_ns(unsigned long flags,
 		return ERR_PTR(-EINVAL);
 
 	return old_ns;
+}
+
+static inline void timens_clock_to_host(int clockid, struct timespec64 *val)
+{
+}
+
+static inline void timens_clock_from_host(int clockid, struct timespec64 *val)
+{
 }
 
 #endif

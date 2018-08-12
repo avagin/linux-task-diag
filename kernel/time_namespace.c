@@ -154,6 +154,45 @@ static struct user_namespace *timens_owner(struct ns_common *ns)
 	return to_time_ns(ns)->user_ns;
 }
 
+static void clock_timens_fixup(int clockid, struct timespec64 *val, bool to_ns)
+{
+	struct timens_offsets *ns_offsets = current->nsproxy->time_ns->offsets;
+	struct timespec64 *offsets = NULL;
+
+	if (!ns_offsets)
+		return;
+
+	if (val->tv_sec == 0 && val->tv_nsec == 0)
+		return;
+
+	switch (clockid) {
+	case CLOCK_MONOTONIC:
+		offsets = &ns_offsets->monotonic_time_offset;
+		break;
+	case CLOCK_BOOTTIME:
+		offsets = &ns_offsets->monotonic_boottime_offset;
+		break;
+	}
+
+	if (!offsets)
+		return;
+
+	if (to_ns)
+		*val = timespec64_add(*val, *offsets);
+	else
+		*val = timespec64_sub(*val, *offsets);
+}
+
+void timens_clock_to_host(int clockid, struct timespec64 *val)
+{
+	clock_timens_fixup(clockid, val, false);
+}
+
+void timens_clock_from_host(int clockid, struct timespec64 *val)
+{
+	clock_timens_fixup(clockid, val, true);
+}
+
 const struct proc_ns_operations timens_operations = {
 	.name		= "time",
 	.type		= CLONE_NEWTIME,
