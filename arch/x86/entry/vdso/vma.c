@@ -25,6 +25,7 @@
 #include <asm/cpufeature.h>
 #include <asm/mshyperv.h>
 #include <asm/page.h>
+#include <asm/tlb.h>
 
 #if defined(CONFIG_X86_64)
 unsigned int __read_mostly vdso64_enabled = 1;
@@ -150,6 +151,84 @@ static const struct vm_special_mapping vvar_mapping = {
 	.fault = vvar_fault,
 };
 
+#ifdef CONFIG_TIME_NS
+static const struct vdso_image *timens_vdso(const struct vdso_image *old_img,
+					    bool in_ns)
+{
+#ifdef CONFIG_X86_X32_ABI
+	if (old_img == &vdso_image_x32)
+		return NULL;
+#endif
+#if defined CONFIG_X86_32 || defined CONFIG_IA32_EMULATION
+	if (old_img == &vdso_image_32 || old_img == &vdso_image_32_timens)
+		return in_ns ? &vdso_image_32_timens : &vdso_image_32;
+#endif
+#ifdef CONFIG_X86_64
+	if (old_img == &vdso_image_64 || old_img == &vdso_image_64_timens)
+		return in_ns ? &vdso_image_64_timens : &vdso_image_64;
+#endif
+	return NULL;
+}
+
+static const struct vdso_image *image_to_timens(const struct vdso_image *img)
+{
+	bool in_ns = (current->nsproxy->time_ns != &init_time_ns);
+	const struct vdso_image *ns;
+
+	ns = timens_vdso(img, in_ns);
+
+	return ns ?: img;
+}
+
+int vdso_join_timens(struct task_struct *task, bool inside_ns)
+{
+	const struct vdso_image *new_image, *old_image;
+	struct mm_struct *mm = task->mm;
+	struct vm_area_struct *vma;
+	int ret = 0;
+
+	if (down_write_killable(&mm->mmap_sem))
+		return -EINTR;
+
+	old_image = mm->context.vdso_image;
+	new_image = timens_vdso(old_image, inside_ns);
+	if (!new_image) {
+		ret = -EOPNOTSUPP;
+		goto out;
+	}
+
+	/* Sanity checks, shouldn't happen */
+	if (unlikely(old_image->size != new_image->size)) {
+		ret = -ENXIO;
+		goto out;
+	}
+
+	mm->context.vdso_image = new_image;
+
+	for (vma = mm->mmap; vma; vma = vma->vm_next) {
+		unsigned long size = vma->vm_end - vma->vm_start;
+
+		if (vma_is_special_mapping(vma, &vvar_mapping))
+			zap_page_range(vma, vma->vm_start, size);
+		if (vma_is_special_mapping(vma, &vdso_mapping))
+			zap_page_range(vma, vma->vm_start, size);
+	}
+
+out:
+	up_write(&mm->mmap_sem);
+	return ret;
+}
+#else /* CONFIG_TIME_NS */
+static const struct vdso_image *image_to_timens(const struct vdso_image *img)
+{
+	return img;
+}
+int vdso_join_timens(struct task_struct *task, bool inside_ns)
+{
+	return -ENXIO;
+}
+#endif
+
 /*
  * Add vdso and vvar mappings to current process.
  * @image          - blob to map
@@ -164,6 +243,8 @@ static int map_vdso(const struct vdso_image *image, unsigned long addr)
 
 	if (down_write_killable(&mm->mmap_sem))
 		return -EINTR;
+
+	image = image_to_timens(image);
 
 	addr = get_unmapped_area(NULL, addr,
 				 image->size - image->sym_vvar_start, 0, 0);
