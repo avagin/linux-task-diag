@@ -231,20 +231,37 @@ notrace static int __always_inline do_realtime(struct timespec *ts)
 	return mode;
 }
 
+notrace void set_normalized_timespec(struct timespec *ts, time_t sec, s64 nsec)
+{
+	while (nsec >= NSEC_PER_SEC) {
+		/*
+		 * The following asm() prevents the compiler from
+		 * optimising this loop into a modulo operation. See
+		 * also __iter_div_u64_rem() in include/linux/time.h
+		 */
+		asm("" : "+rm"(nsec));
+		nsec -= NSEC_PER_SEC;
+		++sec;
+	}
+	while (nsec < 0) {
+		asm("" : "+rm"(nsec));
+		nsec += NSEC_PER_SEC;
+		--sec;
+	}
+	ts->tv_sec = sec;
+	ts->tv_nsec = nsec;
+}
+
 notrace static __always_inline void monotonic_to_ns(struct timespec *ts)
 {
 #ifdef CONFIG_TIME_NS
 	struct timens_offsets *timens = (struct timens_offsets *) &timens_page;
+	struct timespec offset;
 
-	ts->tv_sec += timens->monotonic_time_offset.tv_sec;
-	ts->tv_nsec += timens->monotonic_time_offset.tv_nsec;
-	if (ts->tv_nsec > NSEC_PER_SEC) {
-		ts->tv_nsec -= NSEC_PER_SEC;
-		ts->tv_sec++;
-	} else if (ts->tv_nsec < 0) {
-		ts->tv_nsec += NSEC_PER_SEC;
-		ts->tv_sec--;
-	}
+	offset = timespec64_to_timespec(timens->monotonic_time_offset);
+
+	*ts = timespec_add(*ts, offset);
+
 #endif
 }
 
