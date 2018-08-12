@@ -220,6 +220,9 @@ static int posix_ktime_set_ts(clockid_t which_clock, const struct timespec64 *tp
 	struct timens_offsets *ns_offsets = current->nsproxy->time_ns->offsets;
 	struct timespec64 ktp;
 
+	if (!ns_capable(current->nsproxy->time_ns->user_ns, CAP_SYS_TIME))
+		return -EPERM;
+
 	ktime_get_ts64(&ktp);
 
 	if (ns_offsets)
@@ -285,6 +288,9 @@ static int posix_set_boottime(clockid_t which_clock, const struct timespec64 *tp
 {
 	struct timens_offsets *ns_offsets = current->nsproxy->time_ns->offsets;
 	struct timespec64 ktp;
+
+	if (!ns_capable(current->nsproxy->time_ns->user_ns, CAP_SYS_TIME))
+		return -EPERM;
 
 	ktime_get_boottime_ts64(&ktp);
 
