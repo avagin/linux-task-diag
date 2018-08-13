@@ -159,7 +159,18 @@ static int vvar_fault(const struct vm_special_mapping *sm,
 	return VM_FAULT_SIGBUS;
 }
 
-static void clear_flush_timens_pte(struct mm_struct *mm, unsigned long addr)
+static const struct vm_special_mapping vdso_mapping = {
+	.name = "[vdso]",
+	.fault = vdso_fault,
+	.mremap = vdso_mremap,
+};
+static const struct vm_special_mapping vvar_mapping = {
+	.name = "[vvar]",
+	.fault = vvar_fault,
+	.mremap = vvar_mremap,
+};
+
+static void vvar_flush_timens_pte(struct mm_struct *mm, unsigned long addr)
 {
 	spinlock_t *ptl;
 	pte_t *ptep;
@@ -175,30 +186,30 @@ int vvar_purge_timens(struct task_struct *task)
 {
 	struct mm_struct *mm = task->mm;
 	const struct vdso_image *image;
+	struct vm_area_struct *vma;
 	unsigned long addr;
 
 	if (down_write_killable(&mm->mmap_sem))
 		return -EINTR;
 
+	for (vma = mm->mmap; vma; vma = vma->vm_next) {
+		if (vma_is_special_mapping(vma, &vvar_mapping))
+			break;
+	}
+
+	/* vvar is unmapped */
+	if (!vma || !vma_is_special_mapping(vma, &vvar_mapping))
+		goto out;
+
 	image = mm->context.vdso_image;
 
-	addr = (unsigned long)mm->context.vdso + image->sym_timens_page;
-	clear_flush_timens_pte(mm, addr);
+	addr = vma->vm_end + image->sym_timens_page;
+	vvar_flush_timens_pte(mm, addr);
 
+out:
 	up_write(&mm->mmap_sem);
 	return 0;
 }
-
-static const struct vm_special_mapping vdso_mapping = {
-	.name = "[vdso]",
-	.fault = vdso_fault,
-	.mremap = vdso_mremap,
-};
-static const struct vm_special_mapping vvar_mapping = {
-	.name = "[vvar]",
-	.fault = vvar_fault,
-	.mremap = vvar_mremap,
-};
 
 /*
  * Add vdso and vvar mappings to current process.
