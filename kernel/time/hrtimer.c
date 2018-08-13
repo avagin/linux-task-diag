@@ -51,6 +51,7 @@
 #include <linux/timer.h>
 #include <linux/freezer.h>
 #include <linux/compat.h>
+#include <linux/time_namespace.h>
 
 #include <linux/uaccess.h>
 
@@ -1730,8 +1731,15 @@ long hrtimer_nanosleep(const struct timespec64 *rqtp,
 {
 	struct restart_block *restart;
 	struct hrtimer_sleeper t;
+	struct timespec64 tp;
 	int ret = 0;
 	u64 slack;
+
+	if (!(mode & HRTIMER_MODE_REL)) {
+		tp = *rqtp;
+		rqtp = &tp;
+		timens_clock_to_host(clockid, &tp);
+	}
 
 	slack = current->timer_slack_ns;
 	if (dl_task(current) || rt_task(current))
