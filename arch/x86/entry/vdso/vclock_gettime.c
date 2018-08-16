@@ -252,17 +252,25 @@ notrace void set_normalized_timespec(struct timespec *ts, time_t sec, s64 nsec)
 	ts->tv_nsec = nsec;
 }
 
-notrace static __always_inline void monotonic_to_ns(struct timespec *ts)
+notrace static __always_inline int monotonic_to_ns(struct timespec *ts)
 {
 #ifdef CONFIG_TIME_NS
 	struct timens_offsets *timens = (struct timens_offsets *) &timens_page;
 	struct timespec offset;
+
+	/* Optimization: time is the same as on host, return right away */
+	if (!(timens->flags & TIMENS_USE_OFFSETS))
+		return 0;
+
+	if (timens->flags & TIMENS_FALLBACK_SYSCALL)
+		return -1;
 
 	offset = timespec64_to_timespec(timens->monotonic_time_offset);
 
 	*ts = timespec_add(*ts, offset);
 
 #endif
+	return 0;
 }
 
 notrace static int __always_inline do_monotonic(struct timespec *ts)
@@ -282,8 +290,6 @@ notrace static int __always_inline do_monotonic(struct timespec *ts)
 
 	ts->tv_sec += __iter_div_u64_rem(ns, NSEC_PER_SEC, &ns);
 	ts->tv_nsec = ns;
-
-	monotonic_to_ns(ts);
 
 	return mode;
 }
@@ -306,7 +312,6 @@ notrace static void do_monotonic_coarse(struct timespec *ts)
 		ts->tv_sec = gtod->monotonic_time_coarse_sec;
 		ts->tv_nsec = gtod->monotonic_time_coarse_nsec;
 	} while (unlikely(gtod_read_retry(gtod, seq)));
-	monotonic_to_ns(ts);
 }
 
 notrace int __vdso_clock_gettime(clockid_t clock, struct timespec *ts)
@@ -319,12 +324,16 @@ notrace int __vdso_clock_gettime(clockid_t clock, struct timespec *ts)
 	case CLOCK_MONOTONIC:
 		if (do_monotonic(ts) == VCLOCK_NONE)
 			goto fallback;
+		if (monotonic_to_ns(ts))
+			goto fallback;
 		break;
 	case CLOCK_REALTIME_COARSE:
 		do_realtime_coarse(ts);
 		break;
 	case CLOCK_MONOTONIC_COARSE:
 		do_monotonic_coarse(ts);
+		if (monotonic_to_ns(ts))
+			goto fallback;
 		break;
 	default:
 		goto fallback;

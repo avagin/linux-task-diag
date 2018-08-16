@@ -171,7 +171,7 @@ static void clock_timens_fixup(int clockid, struct timespec64 *val, bool to_ns)
 	struct timens_offsets *ns_offsets = current->nsproxy->time_ns->offsets;
 	struct timespec64 *offsets = NULL;
 
-	if (!ns_offsets)
+	if (!ns_offsets || !(ns_offsets->flags & TIMENS_USE_OFFSETS))
 		return;
 
 	if (val->tv_sec == 0 && val->tv_nsec == 0)
