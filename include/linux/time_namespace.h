@@ -41,6 +41,9 @@ static inline void put_time_ns(struct time_namespace *ns)
 }
 
 
+extern void timens_clock_to_host(int clockid, struct timespec64 *val);
+extern void timens_clock_from_host(int clockid, struct timespec64 *val);
+
 #else
 static inline struct time_namespace *get_time_ns(struct time_namespace *ns)
 {
@@ -63,6 +66,14 @@ static inline struct time_namespace *copy_time_ns(unsigned long flags,
 static inline int timens_on_fork(struct nsproxy *nsproxy, struct task_struct *tsk)
 {
 	return 0;
+}
+
+static inline void timens_clock_to_host(int clockid, struct timespec64 *val)
+{
+}
+
+static inline void timens_clock_from_host(int clockid, struct timespec64 *val)
+{
 }
 
 #endif

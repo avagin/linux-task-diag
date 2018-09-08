@@ -30,6 +30,7 @@
 #include <linux/hashtable.h>
 #include <linux/compat.h>
 #include <linux/nospec.h>
+#include <linux/time_namespace.h>
 
 #include "timekeeping.h"
 #include "posix-timers.h"
@@ -1041,6 +1042,9 @@ SYSCALL_DEFINE2(clock_gettime, const clockid_t, which_clock,
 
 	error = kc->clock_get(which_clock, &kernel_tp);
 
+	if (!error && kc->clock_timens_adjust)
+		timens_clock_from_host(which_clock, &kernel_tp);
+
 	if (!error && put_timespec64(&kernel_tp, tp))
 		error = -EFAULT;
 
@@ -1116,6 +1120,9 @@ COMPAT_SYSCALL_DEFINE2(clock_gettime, clockid_t, which_clock,
 		return -EINVAL;
 
 	err = kc->clock_get(which_clock, &ts);
+
+	if (!err && kc->clock_timens_adjust)
+		timens_clock_from_host(which_clock, &ts);
 
 	if (!err && put_old_timespec32(&ts, tp))
 		err = -EFAULT;
@@ -1259,6 +1266,7 @@ static const struct k_clock clock_realtime = {
 static const struct k_clock clock_monotonic = {
 	.clock_getres		= posix_get_hrtimer_res,
 	.clock_get		= posix_ktime_get_ts,
+	.clock_timens_adjust	= true,
 	.nsleep			= common_nsleep,
 	.timer_create		= common_timer_create,
 	.timer_set		= common_timer_set,
@@ -1274,6 +1282,7 @@ static const struct k_clock clock_monotonic = {
 static const struct k_clock clock_monotonic_raw = {
 	.clock_getres		= posix_get_hrtimer_res,
 	.clock_get		= posix_get_monotonic_raw,
+	.clock_timens_adjust	= true,
 };
 
 static const struct k_clock clock_realtime_coarse = {
@@ -1284,6 +1293,7 @@ static const struct k_clock clock_realtime_coarse = {
 static const struct k_clock clock_monotonic_coarse = {
 	.clock_getres		= posix_get_coarse_res,
 	.clock_get		= posix_get_monotonic_coarse,
+	.clock_timens_adjust	= true,
 };
 
 static const struct k_clock clock_tai = {
