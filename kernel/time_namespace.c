@@ -208,6 +208,9 @@ static void clock_timens_fixup(int clockid, struct timespec64 *val, bool to_ns)
 	case CLOCK_MONOTONIC_COARSE:
 		offsets = &ns_offsets->monotonic_time_offset;
 		break;
+	case CLOCK_BOOTTIME:
+		offsets = &ns_offsets->monotonic_boottime_offset;
+		break;
 	}
 
 	if (!offsets)
