@@ -21,6 +21,7 @@
 #include <linux/math64.h>
 #include <linux/time.h>
 #include <linux/kernel.h>
+#include <linux/timens_offsets.h>
 
 #define gtod (&VVAR(vsyscall_gtod_data))
 
@@ -35,6 +36,11 @@ extern u8 pvclock_page
 
 #ifdef CONFIG_HYPERV_TSCPAGE
 extern u8 hvclock_page
+	__attribute__((visibility("hidden")));
+#endif
+
+#ifdef CONFIG_TIME_NS
+extern u8 timens_page
 	__attribute__((visibility("hidden")));
 #endif
 
@@ -225,6 +231,23 @@ notrace static int __always_inline do_realtime(struct timespec *ts)
 	return mode;
 }
 
+notrace static __always_inline void monotonic_to_ns(struct timespec *ts)
+{
+#ifdef CONFIG_TIME_NS
+	struct timens_offsets *timens = (struct timens_offsets *) &timens_page;
+
+	ts->tv_sec += timens->monotonic_time_offset.tv_sec;
+	ts->tv_nsec += timens->monotonic_time_offset.tv_nsec;
+	if (ts->tv_nsec > NSEC_PER_SEC) {
+		ts->tv_nsec -= NSEC_PER_SEC;
+		ts->tv_sec++;
+	} else if (ts->tv_nsec < 0) {
+		ts->tv_nsec += NSEC_PER_SEC;
+		ts->tv_sec--;
+	}
+#endif
+}
+
 notrace static int __always_inline do_monotonic(struct timespec *ts)
 {
 	unsigned long seq;
@@ -242,6 +265,8 @@ notrace static int __always_inline do_monotonic(struct timespec *ts)
 
 	ts->tv_sec += __iter_div_u64_rem(ns, NSEC_PER_SEC, &ns);
 	ts->tv_nsec = ns;
+
+	monotonic_to_ns(ts);
 
 	return mode;
 }
@@ -264,6 +289,7 @@ notrace static void do_monotonic_coarse(struct timespec *ts)
 		ts->tv_sec = gtod->monotonic_time_coarse_sec;
 		ts->tv_nsec = gtod->monotonic_time_coarse_nsec;
 	} while (unlikely(gtod_read_retry(gtod, seq)));
+	monotonic_to_ns(ts);
 }
 
 notrace int __vdso_clock_gettime(clockid_t clock, struct timespec *ts)
