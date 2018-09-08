@@ -276,7 +276,32 @@ static int posix_get_coarse_res(const clockid_t which_clock, struct timespec64 *
 
 static int posix_get_boottime(const clockid_t which_clock, struct timespec64 *tp)
 {
+	struct timens_offsets *ns_offsets = current->nsproxy->time_ns->offsets;
+
 	ktime_get_boottime_ts64(tp);
+
+	if (!ns_offsets)
+		return 0;
+
+	*tp = timespec64_add(*tp, ns_offsets->monotonic_boottime_offset);
+
+	return 0;
+}
+
+static int posix_set_boottime(clockid_t which_clock, const struct timespec64 *tp)
+{
+	struct timens_offsets *ns_offsets = current->nsproxy->time_ns->offsets;
+	struct timespec64 ktp;
+
+	if (!ns_capable(current->nsproxy->time_ns->user_ns, CAP_SYS_TIME))
+		return -EPERM;
+
+	ktime_get_boottime_ts64(&ktp);
+
+	if (ns_offsets)
+		ns_offsets->monotonic_boottime_offset = timespec64_sub(*tp, ktp);
+	else
+		return -EINVAL;
 	return 0;
 }
 
@@ -1362,6 +1387,7 @@ static const struct k_clock clock_tai = {
 static const struct k_clock clock_boottime = {
 	.clock_getres		= posix_get_hrtimer_res,
 	.clock_get		= posix_get_boottime,
+	.clock_set		= posix_set_boottime,
 	.nsleep			= common_nsleep,
 	.timer_create		= common_timer_create,
 	.timer_set		= common_timer_set,
