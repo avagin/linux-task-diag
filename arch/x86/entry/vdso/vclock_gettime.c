@@ -21,6 +21,7 @@
 #include <linux/math64.h>
 #include <linux/time.h>
 #include <linux/kernel.h>
+#include <linux/timens_offsets.h>
 
 #define gtod (&VVAR(vsyscall_gtod_data))
 
@@ -35,6 +36,11 @@ extern u8 pvclock_page
 
 #ifdef CONFIG_HYPERV_TSCPAGE
 extern u8 hvclock_page
+	__attribute__((visibility("hidden")));
+#endif
+
+#ifdef BUILD_VDSO_TIME_NS
+extern u8 timens_page
 	__attribute__((visibility("hidden")));
 #endif
 
@@ -139,6 +145,38 @@ notrace static inline u64 vgetcyc(int mode)
 	return U64_MAX;
 }
 
+notrace static __always_inline void clk_to_ns(clockid_t clk, struct timespec *ts)
+{
+#ifdef BUILD_VDSO_TIME_NS
+	struct timens_offsets *timens = (struct timens_offsets *) &timens_page;
+	struct timespec64 *offset64;
+
+	switch (clk) {
+	case CLOCK_MONOTONIC:
+	case CLOCK_MONOTONIC_COARSE:
+	case CLOCK_MONOTONIC_RAW:
+		offset64 = &timens->monotonic_time_offset;
+		break;
+	case CLOCK_BOOTTIME:
+		offset64 = &timens->monotonic_boottime_offset;
+	default:
+		return;
+	}
+
+	ts->tv_nsec += offset64->tv_nsec;
+	ts->tv_sec += offset64->tv_sec;
+	if (ts->tv_nsec >= NSEC_PER_SEC) {
+		ts->tv_nsec -= NSEC_PER_SEC;
+		ts->tv_sec++;
+	}
+	if (ts->tv_nsec < 0) {
+		ts->tv_nsec += NSEC_PER_SEC;
+		ts->tv_sec--;
+	}
+
+#endif
+}
+
 notrace static int do_hres(clockid_t clk, struct timespec *ts)
 {
 	struct vgtod_ts *base = &gtod->basetime[clk];
@@ -165,6 +203,8 @@ notrace static int do_hres(clockid_t clk, struct timespec *ts)
 	ts->tv_sec = sec + __iter_div_u64_rem(ns, NSEC_PER_SEC, &ns);
 	ts->tv_nsec = ns;
 
+	clk_to_ns(clk, ts);
+
 	return 0;
 }
 
@@ -178,6 +218,8 @@ notrace static void do_coarse(clockid_t clk, struct timespec *ts)
 		ts->tv_sec = base->sec;
 		ts->tv_nsec = base->nsec;
 	} while (unlikely(gtod_read_retry(gtod, seq)));
+
+	clk_to_ns(clk, ts);
 }
 
 notrace int __vdso_clock_gettime(clockid_t clock, struct timespec *ts)
