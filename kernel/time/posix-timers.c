@@ -1208,6 +1208,9 @@ COMPAT_SYSCALL_DEFINE2(clock_gettime, clockid_t, which_clock,
 
 	err = kc->clock_get(which_clock, &ts);
 
+	if (!err && kc->clock_timens_adjust)
+		kc->clock_timens_adjust(which_clock, &ts);
+
 	if (!err && compat_put_timespec64(&ts, tp))
 		err = -EFAULT;
 
