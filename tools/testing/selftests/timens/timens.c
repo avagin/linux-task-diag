@@ -184,7 +184,7 @@ static int test_gettime(unsigned clock_index, bool raw_syscall, time_t offset)
 	if (_settime(clocks[clock_index], &child_ts_new, raw_syscall))
 		return -1;
 
-	if (_gettime(clocks[clock_index], &cur_ts, !raw_syscall))
+	if (_gettime(clocks[clock_index], &cur_ts, raw_syscall))
 		return -1;
 
 	if (difftime(cur_ts.tv_sec, child_ts_new.tv_sec) < precision) {
