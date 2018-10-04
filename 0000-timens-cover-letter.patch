@@ -1,0 +1,175 @@
+From e7d25bd5f8096e928acdd34373f87ac7b4dbd826 Mon Sep 17 00:00:00 2001
+From: Andrei Vagin <avagin@gmail.com>
+Date: Wed, 19 Sep 2018 10:17:54 -0700
+Subject: [PATCH 00/20] kernel: Introduce Time Namespace
+
+Discussions around time namespace are there for a long time. The first
+attempt to implement it was in 2006 by Jeff Dike. From that time, the
+topic appears on and off in various discussions.
+
+There are two main use cases for time namespaces:
+1. change date and time inside a container;
+2. adjust clocks for a container restored from a checkpoint.
+
+“It seems like this might be one of the last major obstacles keeping
+migration from being used in production systems, given that not all
+containers and connections can be migrated as long as a time dependency
+is capable of messing it up.” (by github.com/dav-ell)
+
+The kernel provides access to several clocks: CLOCK_REALTIME,
+CLOCK_MONOTONIC, CLOCK_BOOTTIME. Last two clocks are monotonous, but the
+start points for them are not defined and are different for each
+system. When a container is migrated from one node to another, all
+clocks have to be restored into consistent states; in other words, they
+have to continue running from the same points where they have been
+dumped.
+
+The main idea of this patch set is adding per-namespace offsets for
+system clocks. When a process in a non-root time namespace requests
+time of a clock, a namespace offset is added to the current value of
+this clock and the sum is returned.
+
+All offsets are placed on a separate page, this allows us to map it as
+part of VVAR into user processes and use offsets from VDSO calls.
+
+Now offsets are implemented for CLOCK_MONOTONIC and CLOCK_BOOTTIME
+clocks.
+
+v2: There are two major changes from the previous version:
+
+* Two versions of the VDSO library to avoid a performance penalty for
+  host tasks outside time namespace (as suggested by Andy and Thomas).
+
+  As it has been discussed on timens RFC, adding a new conditional branch
+  `if (inside_time_ns)` on VDSO for all processes is undesirable.
+  It will add a penalty for everybody as branch predictor may mispredict
+  the jump. Also there are instruction cache lines wasted on cmp/jmp.
+
+  Those effects of introducing time namespace are very much unwanted
+  having in mind how much work have been spent on micro-optimisation
+  VDSO code.
+
+  Addressing those problems, there are two versions of VDSO's .so:
+  for host tasks (without any penalty) and for processes inside of time
+  namespace with clk_to_ns() that subtracts offsets from host's time.
+
+
+* Allow to set clock offsets for a namespace only before any processes
+  appear in it.
+
+  Now a time namespace looks similar to a pid namespace in a way how it is
+  created: unshare(CLONE_NEWTIME) system call creates a new time namespace,
+  but doesn't set it to the current process. Then all children of
+  the process will be born in the new time namespace, or a process can
+  use the setns() system call to join a namespace.
+
+  This scheme allows to create a new time namespaces, set clock offsets
+  and then populate the namespace with processes.
+
+Our performance measurements show that the price of VDSO's clock_gettime()
+in a child time namespace is about 8% with a hot CPU cache and about 90%
+with a cold CPU cache. There is no performance regression for host
+processes outside time namespace on those tests.
+
+We wrote two small benchmarks. The first one gettime_perf.c calls
+clock_gettime() in a loop for 3 seconds. It shows us performance with
+a hot CPU cache (more clock_gettime() cycles - the better):
+
+        | before     | CONFIG_TIME_NS=n | host        | inside timens
+--------|------------|------------------|-------------|-------------
+cycles  | 139887013  | 139453003        | 139899785   | 128792458
+diff (%)| 100        | 99.7             | 100         | 92
+
+The second one gettime_perf_cold.c calls rdtsc, clock_gettime(), rdtsc
+and shows a difference of second and first rdtsc. We call this binary in
+a loop 1000 times, get 1000 values and calculate MODE for them.
+It should show us performance with a cold CPU cache
+(lesser tsc per cycle - the better):
+
+        | before     | CONFIG_TIME_NS=n | host        | inside timens
+--------|------------|------------------|-------------|-------------
+tsc     | 6748       | 6718             | 6862        | 12682
+diff (%)| 100        | 99.6             | 101.7       | 188
+
+The numbers gathered on Intel(R) Core(TM) i5-6300U CPU @ 2.40GHz.
+
+Cc: Thomas Gleixner <tglx@linutronix.de>
+Cc: "Eric W. Biederman" <ebiederm@xmission.com>
+Cc: Andy Lutomirski <luto@kernel.org>
+Cc: Arnd Bergmann <arnd@arndb.de>
+Cc: Jeff Dike <jdike@addtoit.com>
+
+Andrei Vagin (12):
+  ns: Introduce Time Namespace
+  timens: Add timens_offsets
+  timens: Introduce CLOCK_MONOTONIC offsets
+  timens: Introduce CLOCK_BOOTTIME offset
+  timerfd/timens: Take into account ns clock offsets
+  kernel: Take into account timens clock offsets in clock_nanosleep
+  x86/vdso/timens: Add offsets page in vvar
+  x86/vdso: Use set_normalized_timespec() to avoid 32 bit overflow
+  posix-timers/timens: Take into account clock offsets
+  selftest/timens: Add test for timerfd
+  selftest/timens: Add test for clock_nanosleep
+  timens/selftest: Add timer offsets test
+
+Dmitry Safonov (8):
+  timens: Shift /proc/uptime
+  x86/vdso: Restrict splitting vvar vma
+  x86/vdso: Purge timens page on setns()/unshare()/clone()
+  x86/vdso: Look for vvar vma to purge timens page
+  timens: Add align for timens_offsets
+  timens: Optimize zero-offsets
+  selftest: Add Time Namespace test for supported clocks
+  timens/selftest: Add procfs selftest
+
+ arch/Kconfig                                  |   5 +
+ arch/x86/Kconfig                              |   1 +
+ arch/x86/entry/vdso/vclock_gettime.c          |  52 ++++
+ arch/x86/entry/vdso/vdso-layout.lds.S         |   9 +-
+ arch/x86/entry/vdso/vdso2c.c                  |   3 +
+ arch/x86/entry/vdso/vma.c                     |  67 +++++
+ arch/x86/include/asm/vdso.h                   |   2 +
+ fs/proc/namespaces.c                          |   3 +
+ fs/proc/uptime.c                              |   3 +
+ fs/timerfd.c                                  |  16 +-
+ include/linux/nsproxy.h                       |   1 +
+ include/linux/proc_ns.h                       |   1 +
+ include/linux/time_namespace.h                |  72 ++++++
+ include/linux/timens_offsets.h                |  25 ++
+ include/linux/user_namespace.h                |   1 +
+ include/uapi/linux/sched.h                    |   1 +
+ init/Kconfig                                  |   8 +
+ kernel/Makefile                               |   1 +
+ kernel/fork.c                                 |   3 +-
+ kernel/nsproxy.c                              |  19 +-
+ kernel/time/hrtimer.c                         |   8 +
+ kernel/time/posix-timers.c                    |  89 ++++++-
+ kernel/time/posix-timers.h                    |   2 +
+ kernel/time_namespace.c                       | 230 ++++++++++++++++++
+ tools/testing/selftests/timens/.gitignore     |   5 +
+ tools/testing/selftests/timens/Makefile       |   6 +
+ .../selftests/timens/clock_nanosleep.c        |  98 ++++++++
+ tools/testing/selftests/timens/config         |   1 +
+ tools/testing/selftests/timens/log.h          |  21 ++
+ tools/testing/selftests/timens/procfs.c       | 145 +++++++++++
+ tools/testing/selftests/timens/timens.c       | 196 +++++++++++++++
+ tools/testing/selftests/timens/timer.c        |  95 ++++++++
+ tools/testing/selftests/timens/timerfd.c      |  96 ++++++++
+ 33 files changed, 1272 insertions(+), 13 deletions(-)
+ create mode 100644 include/linux/time_namespace.h
+ create mode 100644 include/linux/timens_offsets.h
+ create mode 100644 kernel/time_namespace.c
+ create mode 100644 tools/testing/selftests/timens/.gitignore
+ create mode 100644 tools/testing/selftests/timens/Makefile
+ create mode 100644 tools/testing/selftests/timens/clock_nanosleep.c
+ create mode 100644 tools/testing/selftests/timens/config
+ create mode 100644 tools/testing/selftests/timens/log.h
+ create mode 100644 tools/testing/selftests/timens/procfs.c
+ create mode 100644 tools/testing/selftests/timens/timens.c
+ create mode 100644 tools/testing/selftests/timens/timer.c
+ create mode 100644 tools/testing/selftests/timens/timerfd.c
+
+-- 
+2.17.1
+
