@@ -13,6 +13,7 @@
 #include <linux/user_namespace.h>
 #include <linux/proc_ns.h>
 #include <linux/sched/task.h>
+#include <linux/seq_file.h>
 #include <linux/mm.h>
 #include <asm/vdso.h>
 
@@ -200,6 +201,76 @@ int timens_on_fork(struct nsproxy *nsproxy, struct task_struct *tsk)
 static struct user_namespace *timens_owner(struct ns_common *ns)
 {
 	return to_time_ns(ns)->user_ns;
+}
+
+static void show_offset(struct seq_file *m, int clockid, struct timespec64 *ts)
+{
+	seq_printf(m, "%d %lld %ld\n", clockid, ts->tv_sec, ts->tv_nsec);
+}
+
+void proc_timens_show_offsets(struct task_struct *p, struct seq_file *m)
+{
+	struct ns_common *ns;
+	struct time_namespace *time_ns;
+	struct timens_offsets *ns_offsets;
+
+	ns = timens_for_children_get(p);
+	if (!ns)
+		return;
+	time_ns = to_time_ns(ns);
+
+	if (!time_ns->offsets) {
+		put_time_ns(time_ns);
+		return;
+	}
+	ns_offsets = time_ns->offsets;
+
+	show_offset(m, CLOCK_MONOTONIC, &ns_offsets->monotonic_time_offset);
+	show_offset(m, CLOCK_BOOTTIME, &ns_offsets->monotonic_boottime_offset);
+	put_time_ns(time_ns);
+}
+
+int proc_timens_set_offset(struct task_struct *p,
+			   struct proc_timens_offset *offsets, int noffsets)
+{
+	struct ns_common *ns;
+	struct time_namespace *time_ns;
+	struct timens_offsets *ns_offsets;
+	int i, err;
+
+	ns = timens_for_children_get(p);
+	if (!ns)
+		return -ESRCH;
+	time_ns = to_time_ns(ns);
+
+	if (!time_ns->offsets || time_ns->initialized ||
+	    !ns_capable(time_ns->user_ns, CAP_SYS_TIME)) {
+		put_time_ns(time_ns);
+		return -EPERM;
+	}
+	ns_offsets = time_ns->offsets;
+
+	err = -EINVAL;
+	for (i = 0; i < noffsets; i++) {
+		struct proc_timens_offset *off = &offsets[i];
+
+		switch (off->clockid) {
+		case CLOCK_MONOTONIC:
+			ns_offsets->monotonic_time_offset = off->val;
+			break;
+		case CLOCK_BOOTTIME:
+			ns_offsets->monotonic_boottime_offset = off->val;
+			break;
+		default:
+			goto out;
+		}
+	}
+
+	err = 0;
+out:
+	put_time_ns(time_ns);
+
+	return err;
 }
 
 static void clock_timens_fixup(int clockid, struct timespec64 *val, bool to_ns)

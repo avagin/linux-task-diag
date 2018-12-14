@@ -41,6 +41,16 @@ static inline void put_time_ns(struct time_namespace *ns)
 }
 
 
+extern void proc_timens_show_offsets(struct task_struct *p, struct seq_file *m);
+
+struct proc_timens_offset {
+	int clockid;
+	struct timespec64 val;
+};
+
+extern int proc_timens_set_offset(struct task_struct *p,
+				struct proc_timens_offset *offsets, int n);
+
 extern void timens_clock_to_host(int clockid, struct timespec64 *val);
 extern void timens_clock_from_host(int clockid, struct timespec64 *val);
 
