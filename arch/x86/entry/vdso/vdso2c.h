@@ -7,7 +7,8 @@
 
 static void BITSFUNC(go)(void *raw_addr, size_t raw_len,
 			 void *stripped_addr, size_t stripped_len,
-			 FILE *outfile, const char *name)
+			 FILE *outfile, const char *name,
+			 FILE *out_entries_lds)
 {
 	int found_load = 0;
 	unsigned long load_size = -1;  /* Work around bogus warning */
@@ -111,6 +112,19 @@ static void BITSFUNC(go)(void *raw_addr, size_t raw_len,
 				syms[k] = GET_LE(&sym->st_value);
 			}
 		}
+
+		if (!out_entries_lds)
+			continue;
+
+		if (ELF_FUNC(ST_BIND, sym->st_info) != STB_GLOBAL)
+			continue;
+
+		if (ELF_FUNC(ST_TYPE, sym->st_info) != STT_FUNC)
+			continue;
+
+		fprintf(out_entries_lds, "\t\t. = ABSOLUTE(%#lx);\n",
+				(unsigned long)GET_LE(&sym->st_value));
+		fprintf(out_entries_lds, "\t\t*(.text.%s*)\n", name);
 	}
 
 	/* Validate mapping addresses. */
