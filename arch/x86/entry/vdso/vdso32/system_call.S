@@ -8,7 +8,7 @@
 #include <asm/cpufeatures.h>
 #include <asm/alternative-asm.h>
 
-	.text
+	.section .text.__kernel_vsyscall, "ax"
 	.globl __kernel_vsyscall
 	.type __kernel_vsyscall,@function
 	ALIGN
