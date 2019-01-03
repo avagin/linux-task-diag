@@ -70,7 +70,17 @@ SECTIONS
 	 * stuff that isn't used at runtime in between.
 	 */
 
-	.text		: { *(.text*) }			:text	=0x90909090,
+	.text		: {
+#if defined(CONFIG_TIME_NS) && !defined(UNALIGNED_ENTRIES)
+#ifdef BUILD_VDSO32
+# include "vdso32.entries"
+#endif
+#ifdef BUILD_VDSO64
+# include "vdso64.entries"
+#endif
+#endif
+		*(.text*)
+	}						:text	=0x90909090,
 
 	.altinstructions	: { *(.altinstructions) }	:text
 	.altinstr_replacement	: { *(.altinstr_replacement) }	:text
