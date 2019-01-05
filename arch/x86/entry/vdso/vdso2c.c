@@ -119,6 +119,19 @@ static void fail(const char *format, ...)
 	va_end(ap);
 }
 
+struct vdso_entry {
+	unsigned long addr;
+	const char *name;
+};
+
+static int entry_addr_cmp(const void *_a, const void *_b)
+{
+	const struct vdso_entry *a = _a;
+	const struct vdso_entry *b = _b;
+
+	return (a->addr < b->addr) - (a->addr > b->addr);
+}
+
 /*
  * Evil macros for little-endian reads and writes
  */

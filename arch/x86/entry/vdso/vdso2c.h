@@ -21,6 +21,7 @@ static void BITSFUNC(go)(void *raw_addr, size_t raw_len,
 	ELF(Dyn) *dyn = 0, *dyn_end = 0;
 	const char *secstrings;
 	INT_BITS syms[NSYMS] = {};
+	struct vdso_entry *entries, *next_entry;
 
 	ELF(Phdr) *pt = (ELF(Phdr) *)(raw_addr + GET_LE(&hdr->e_phoff));
 
@@ -88,6 +89,10 @@ static void BITSFUNC(go)(void *raw_addr, size_t raw_len,
 		GET_LE(&hdr->e_shentsize) * GET_LE(&symtab_hdr->sh_link);
 
 	syms_nr = GET_LE(&symtab_hdr->sh_size) / GET_LE(&symtab_hdr->sh_entsize);
+	entries = calloc(syms_nr, sizeof(*entries));
+	if (!entries)
+		fail("malloc()\n");
+	next_entry = entries;
 	/* Walk the symbol table */
 	for (i = 0; i < syms_nr; i++) {
 		unsigned int k;
@@ -122,10 +127,19 @@ static void BITSFUNC(go)(void *raw_addr, size_t raw_len,
 		if (ELF_FUNC(ST_TYPE, sym->st_info) != STT_FUNC)
 			continue;
 
-		fprintf(out_entries_lds, "\t\t. = ABSOLUTE(%#lx);\n",
-				(unsigned long)GET_LE(&sym->st_value));
-		fprintf(out_entries_lds, "\t\t*(.text.%s*)\n", name);
+		next_entry->addr = GET_LE(&sym->st_value);
+		next_entry->name = name;
+		next_entry++;
 	}
+
+	qsort(entries, next_entry - entries, sizeof(*entries), entry_addr_cmp);
+
+	while (next_entry != entries && out_entries_lds) {
+		next_entry--;
+		fprintf(out_entries_lds, "\t\t. = ABSOLUTE(%#lx);\n\t\t*(.text.%s*)\n",
+			next_entry->addr, next_entry->name);
+	}
+	free(entries);
 
 	/* Validate mapping addresses. */
 	for (i = 0; i < sizeof(special_pages) / sizeof(special_pages[0]); i++) {
