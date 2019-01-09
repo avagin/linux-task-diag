@@ -1,4 +1,5 @@
 clock_nanosleep
+gettime_perf
 procfs
 timens
 timer
