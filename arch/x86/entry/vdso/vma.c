@@ -343,6 +343,10 @@ static int __init init_vdso(void)
 {
 	init_vdso_image(&vdso_image_64);
 
+#ifdef CONFIG_TIME_NS
+	init_vdso_image(&vdso_image_64_timens);
+#endif
+
 #ifdef CONFIG_X86_X32_ABI
 	init_vdso_image(&vdso_image_x32);
 #endif

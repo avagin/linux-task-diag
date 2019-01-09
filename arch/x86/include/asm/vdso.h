@@ -32,6 +32,9 @@ struct vdso_image {
 
 #ifdef CONFIG_X86_64
 extern const struct vdso_image vdso_image_64;
+#ifdef CONFIG_TIME_NS
+extern const struct vdso_image vdso_image_64_timens;
+#endif
 #endif
 
 #ifdef CONFIG_X86_X32
@@ -40,6 +43,9 @@ extern const struct vdso_image vdso_image_x32;
 
 #if defined CONFIG_X86_32 || defined CONFIG_COMPAT
 extern const struct vdso_image vdso_image_32;
+#ifdef CONFIG_TIME_NS
+extern const struct vdso_image vdso_image_32_timens;
+#endif
 #endif
 
 extern void __init init_vdso_image(const struct vdso_image *image);
