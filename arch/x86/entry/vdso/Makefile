@@ -44,11 +44,14 @@ vobjs := $(foreach F,$(vobjs-y),$(obj)/$F)
 vobjs32 := $(foreach F,$(vobjs32-y),$(obj)/$F)
 vobjs-timens := $(foreach F,$(vobjs-timens-y),$(obj)/$F)
 vobjs32-timens := $(foreach F,$(vobjs32-timens-y),$(obj)/$F)
+dep-vdso.lds-$(CONFIG_TIME_NS) += $(obj)/vdso-image-64-timens.c
+dep-vdso32.lds-$(CONFIG_TIME_NS) += $(obj)/vdso-image-32-timens.c
 
 $(obj)/vdso.o: $(obj)/vdso.so
 
 targets += vdso.lds $(vobjs-y) $(vobjs-timens-y) vdso64.entries
 targets += vdso32/vdso32.lds $(vobjs32-y) $(vobjs32-timens-y) vdso32.entries
+targets += vdso-timens.lds vdso32/vdso32-timens.lds
 
 # Build the vDSO image C files and link them in.
 vdso_img_objs := $(vdso_img-y:%=vdso-image-%.o)
@@ -59,11 +62,13 @@ targets += $(vdso_img_cfiles)
 targets += $(vdso_img_sodbg) $(vdso_img-y:%=vdso%.so)
 
 CPPFLAGS_vdso.lds += -P -C
+CPPFLAGS_vdso-timens.lds := $(CPPFLAGS_vdso.lds)
 
 VDSO_LDFLAGS_vdso.lds = -m elf_x86_64 -soname linux-vdso.so.1 --no-undefined \
 			-z max-page-size=4096
+VDSO_LDFLAGS_vdso-timens.lds := $(VDSO_LDFLAGS_vdso.lds)
 
-$(obj)/vdso64-timens.so.dbg: $(obj)/vdso.lds $(vobjs-timens) FORCE
+$(obj)/vdso64-timens.so.dbg: $(obj)/vdso-timens.lds $(vobjs-timens) FORCE
 	$(call if_changed,vdso)
 
 $(obj)/vdso64.so.dbg: $(obj)/vdso.lds $(vobjs) FORCE
@@ -78,6 +83,9 @@ quiet_cmd_vdso2c = VDSO2C  $@
 
 $(obj)/vdso-image-%.c: $(obj)/vdso%.so.dbg $(obj)/vdso%.so $(obj)/vdso2c FORCE
 	$(call if_changed,vdso2c)
+
+$(obj)/vdso.lds: $(dep-vdso.lds-y) $(obj)/vdso2c FORCE
+$(obj)/vdso32/vdso32.lds: $(dep-vdso32.lds-y) $(obj)/vdso2c FORCE
 
 #
 # Don't omit frame pointers for ease of userspace debugging, but do
@@ -142,8 +150,10 @@ $(obj)/%.so: $(obj)/%.so.dbg
 $(obj)/vdsox32.so.dbg: $(obj)/vdsox32.lds $(vobjx32s) FORCE
 	$(call if_changed,vdso)
 
-CPPFLAGS_vdso32.lds = $(CPPFLAGS_vdso.lds)
-VDSO_LDFLAGS_vdso32.lds = -m elf_i386 -soname linux-gate.so.1
+CPPFLAGS_vdso32.lds := $(CPPFLAGS_vdso.lds)
+CPPFLAGS_vdso32-timens.lds := $(CPPFLAGS_vdso32.lds)
+VDSO_LDFLAGS_vdso32.lds := -m elf_i386 -soname linux-gate.so.1
+VDSO_LDFLAGS_vdso32-timens.lds := $(VDSO_LDFLAGS_vdso32.lds)
 
 KBUILD_AFLAGS_32 := $(filter-out -m64,$(KBUILD_AFLAGS)) -DBUILD_VDSO
 $(obj)/vdso32.so.dbg: KBUILD_AFLAGS = $(KBUILD_AFLAGS_32)
@@ -172,7 +182,7 @@ endif
 $(obj)/vdso32.so.dbg: KBUILD_CFLAGS = $(KBUILD_CFLAGS_32)
 $(obj)/vdso32-timens.so.dbg: KBUILD_CFLAGS = $(KBUILD_CFLAGS_32)
 
-$(obj)/vdso32-timens.so.dbg: $(obj)/vdso32/vdso32.lds $(vobjs32-timens) FORCE
+$(obj)/vdso32-timens.so.dbg: $(obj)/vdso32/vdso32-timens.lds $(vobjs32-timens) FORCE
 	$(call if_changed,vdso)
 
 $(obj)/vdso32.so.dbg: $(obj)/vdso32/vdso32.lds $(vobjs32) FORCE

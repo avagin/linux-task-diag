@@ -1,4 +1,5 @@
 vdso.lds
+vdso-timens.lds
 vdsox32.lds
 vdso32-syscall-syms.lds
 vdso32-sysenter-syms.lds
