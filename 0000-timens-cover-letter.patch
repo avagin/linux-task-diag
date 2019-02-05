@@ -1,7 +1,7 @@
 From e7d25bd5f8096e928acdd34373f87ac7b4dbd826 Mon Sep 17 00:00:00 2001
 From: Andrei Vagin <avagin@gmail.com>
 Date: Wed, 19 Sep 2018 10:17:54 -0700
-Subject: [PATCH 00/20] kernel: Introduce Time Namespace
+Subject: [PATCH 00/32] kernel: Introduce Time Namespace
 
 Discussions around time namespace are there for a long time. The first
 attempt to implement it was in 2006 by Jeff Dike. From that time, the
@@ -99,64 +99,98 @@ Cc: Andy Lutomirski <luto@kernel.org>
 Cc: Arnd Bergmann <arnd@arndb.de>
 Cc: Jeff Dike <jdike@addtoit.com>
 
-Andrei Vagin (12):
+Andrei Vagin (15):
   ns: Introduce Time Namespace
   timens: Add timens_offsets
   timens: Introduce CLOCK_MONOTONIC offsets
   timens: Introduce CLOCK_BOOTTIME offset
   timerfd/timens: Take into account ns clock offsets
-  kernel: Take into account timens clock offsets in clock_nanosleep
-  x86/vdso/timens: Add offsets page in vvar
-  x86/vdso: Use set_normalized_timespec() to avoid 32 bit overflow
   posix-timers/timens: Take into account clock offsets
-  selftest/timens: Add test for timerfd
-  selftest/timens: Add test for clock_nanosleep
-  timens/selftest: Add timer offsets test
+  timens/kernel: Take into account timens clock offsets in
+    clock_nanosleep
+  x86/vdso/timens: Add offsets page in vvar
+  timens/fs/proc: Introduce /proc/pid/timens_offsets
+  selftest/timens: Add a test for timerfd
+  selftest/timens: Add a test for clock_nanosleep()
+  selftest/timens: Add timer offsets test
+  selftests: Add a simple perf test for clock_gettime()
+  selftest/timens: Check that a right vdso is mapped after fork and exec
+  x86/vdso: Align VDSO functions by CPU L1 cache line
 
-Dmitry Safonov (8):
+Dmitry Safonov (17):
   timens: Shift /proc/uptime
-  x86/vdso: Restrict splitting vvar vma
-  x86/vdso: Purge timens page on setns()/unshare()/clone()
-  x86/vdso: Look for vvar vma to purge timens page
+  x86/vdso2c: Correct err messages on file opening
+  x86/vdso2c: Convert iterator to unsigned
+  x86/vdso/Makefile: Add vobjs32
+  x86/vdso: Build timens .so(s)
+  x86/VDSO: Build VDSO with -ffunction-sections
+  x86/vdso2c: Optionally produce linker script for vdso entries
+  x86/vdso: Generate vdso{,32}-timens.lds
+  x86/vdso2c: Sort vdso entries by addresses for linker script
+  x86/vdso.lds: Align !timens (host's) vdso.so entries
+  x86/vdso2c: Align LOCAL symbols between vdso{-timens,}.so
+  x86/vdso: Initialize timens 64-bit vdso
+  x86/vdso: Switch image on setns()/unshare()/clone()
   timens: Add align for timens_offsets
-  timens: Optimize zero-offsets
-  selftest: Add Time Namespace test for supported clocks
-  timens/selftest: Add procfs selftest
+  selftest/timens: Add Time Namespace test for supported clocks
+  selftest/timens: Add procfs selftest
+  x86/vdso: Restrict splitting VVAR VMA
 
+ MAINTAINERS                                   |   3 +
  arch/Kconfig                                  |   5 +
  arch/x86/Kconfig                              |   1 +
- arch/x86/entry/vdso/vclock_gettime.c          |  52 ++++
- arch/x86/entry/vdso/vdso-layout.lds.S         |   9 +-
- arch/x86/entry/vdso/vdso2c.c                  |   3 +
- arch/x86/entry/vdso/vma.c                     |  67 +++++
- arch/x86/include/asm/vdso.h                   |   2 +
- fs/proc/namespaces.c                          |   3 +
+ arch/x86/entry/vdso/.gitignore                |   2 +
+ arch/x86/entry/vdso/Makefile                  |  61 ++-
+ arch/x86/entry/vdso/vclock_gettime-timens.c   |   6 +
+ arch/x86/entry/vdso/vclock_gettime.c          |  42 +++
+ arch/x86/entry/vdso/vdso-layout.lds.S         |  21 +-
+ arch/x86/entry/vdso/vdso-timens.lds.S         |   7 +
+ arch/x86/entry/vdso/vdso2c.c                  |  46 ++-
+ arch/x86/entry/vdso/vdso2c.h                  |  52 ++-
+ arch/x86/entry/vdso/vdso32/.gitignore         |   1 +
+ arch/x86/entry/vdso/vdso32/sigreturn.S        |   2 +
+ arch/x86/entry/vdso/vdso32/system_call.S      |   2 +-
+ .../entry/vdso/vdso32/vclock_gettime-timens.c |   6 +
+ .../x86/entry/vdso/vdso32/vdso32-timens.lds.S |   8 +
+ arch/x86/entry/vdso/vma.c                     | 110 ++++++
+ arch/x86/include/asm/vdso.h                   |   8 +
+ fs/proc/base.c                                | 101 +++++
+ fs/proc/namespaces.c                          |   4 +
  fs/proc/uptime.c                              |   3 +
  fs/timerfd.c                                  |  16 +-
- include/linux/nsproxy.h                       |   1 +
- include/linux/proc_ns.h                       |   1 +
- include/linux/time_namespace.h                |  72 ++++++
- include/linux/timens_offsets.h                |  25 ++
+ include/linux/nsproxy.h                       |   2 +
+ include/linux/proc_ns.h                       |   2 +
+ include/linux/time_namespace.h                |  91 +++++
+ include/linux/timens_offsets.h                |  18 +
  include/linux/user_namespace.h                |   1 +
  include/uapi/linux/sched.h                    |   1 +
  init/Kconfig                                  |   8 +
  kernel/Makefile                               |   1 +
  kernel/fork.c                                 |   3 +-
- kernel/nsproxy.c                              |  19 +-
+ kernel/nsproxy.c                              |  41 ++-
  kernel/time/hrtimer.c                         |   8 +
- kernel/time/posix-timers.c                    |  89 ++++++-
- kernel/time/posix-timers.h                    |   2 +
- kernel/time_namespace.c                       | 230 ++++++++++++++++++
- tools/testing/selftests/timens/.gitignore     |   5 +
- tools/testing/selftests/timens/Makefile       |   6 +
- .../selftests/timens/clock_nanosleep.c        |  98 ++++++++
+ kernel/time/posix-timers.c                    |  24 +-
+ kernel/time/posix-timers.h                    |   1 +
+ kernel/time_namespace.c                       | 348 ++++++++++++++++++
+ tools/testing/selftests/Makefile              |   1 +
+ tools/testing/selftests/timens/.gitignore     |   7 +
+ tools/testing/selftests/timens/Makefile       |  12 +
+ .../selftests/timens/clock_nanosleep.c        |  99 +++++
  tools/testing/selftests/timens/config         |   1 +
- tools/testing/selftests/timens/log.h          |  21 ++
- tools/testing/selftests/timens/procfs.c       | 145 +++++++++++
- tools/testing/selftests/timens/timens.c       | 196 +++++++++++++++
- tools/testing/selftests/timens/timer.c        |  95 ++++++++
- tools/testing/selftests/timens/timerfd.c      |  96 ++++++++
- 33 files changed, 1272 insertions(+), 13 deletions(-)
+ tools/testing/selftests/timens/exec.c         |  91 +++++
+ tools/testing/selftests/timens/gettime_perf.c |  74 ++++
+ .../selftests/timens/gettime_perf_cold.c      |  63 ++++
+ tools/testing/selftests/timens/log.h          |  26 ++
+ tools/testing/selftests/timens/procfs.c       | 142 +++++++
+ tools/testing/selftests/timens/timens.c       | 191 ++++++++++
+ tools/testing/selftests/timens/timens.h       |  63 ++++
+ tools/testing/selftests/timens/timer.c        | 115 ++++++
+ tools/testing/selftests/timens/timerfd.c      | 119 ++++++
+ 50 files changed, 2008 insertions(+), 52 deletions(-)
+ create mode 100644 arch/x86/entry/vdso/vclock_gettime-timens.c
+ create mode 100644 arch/x86/entry/vdso/vdso-timens.lds.S
+ create mode 100644 arch/x86/entry/vdso/vdso32/vclock_gettime-timens.c
+ create mode 100644 arch/x86/entry/vdso/vdso32/vdso32-timens.lds.S
  create mode 100644 include/linux/time_namespace.h
  create mode 100644 include/linux/timens_offsets.h
  create mode 100644 kernel/time_namespace.c
@@ -164,12 +198,15 @@ Dmitry Safonov (8):
  create mode 100644 tools/testing/selftests/timens/Makefile
  create mode 100644 tools/testing/selftests/timens/clock_nanosleep.c
  create mode 100644 tools/testing/selftests/timens/config
+ create mode 100644 tools/testing/selftests/timens/exec.c
+ create mode 100644 tools/testing/selftests/timens/gettime_perf.c
+ create mode 100644 tools/testing/selftests/timens/gettime_perf_cold.c
  create mode 100644 tools/testing/selftests/timens/log.h
  create mode 100644 tools/testing/selftests/timens/procfs.c
  create mode 100644 tools/testing/selftests/timens/timens.c
+ create mode 100644 tools/testing/selftests/timens/timens.h
  create mode 100644 tools/testing/selftests/timens/timer.c
  create mode 100644 tools/testing/selftests/timens/timerfd.c
 
 -- 
-2.17.1
-
+2.20.1
