@@ -7,10 +7,23 @@
 #define _ASM_X86_STATIC_RETCALL_H
 
 struct retcall_entry {
-	u16 call;
-	u16 ret;
-	u16 out;
+	u16 code;
+	u16 target;
 };
+
+static __always_inline bool timens_static_branch(void)
+{
+	asm_volatile_goto("1:\n\t"
+		".byte " __stringify(STATIC_KEY_INIT_NOP) "\n\t"
+		 ".pushsection __retcall_table,  \"aw\"\n\t"
+		 "2: .word 1b - 2b, %l[l_yes] - 2b\n\t"
+		 ".popsection\n\t"
+		 : :  :  : l_yes);
+
+	return false;
+l_yes:
+	return true;
+}
 
 #define static_retcall(func, ...)					\
 	do {								\

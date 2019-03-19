@@ -208,7 +208,10 @@ notrace static int do_hres(clockid_t clk, struct timespec *ts)
 	ts->tv_sec = sec + __iter_div_u64_rem(ns, NSEC_PER_SEC, &ns);
 	ts->tv_nsec = ns;
 
-	_static_retcall_int(0, clk_to_ns, clk, ts);
+	if (timens_static_branch()) {
+		clk_to_ns(clk, ts);
+	}
+	return 0;
 }
 
 notrace static void do_coarse(clockid_t clk, struct timespec *ts)
@@ -222,7 +225,9 @@ notrace static void do_coarse(clockid_t clk, struct timespec *ts)
 		ts->tv_nsec = base->nsec;
 	} while (unlikely(gtod_read_retry(gtod, seq)));
 
-	_static_retcall(clk_to_ns, clk, ts);
+	if (timens_static_branch()) {
+		clk_to_ns(clk, ts);
+	}
 }
 
 notrace int __vdso_clock_gettime(clockid_t clock, struct timespec *ts)
