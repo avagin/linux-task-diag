@@ -499,7 +499,7 @@ static int fill_task_statm(struct task_struct *task, struct sk_buff *skb, int wh
 	data_vm   = mm->data_vm;
 	stack_vm  = mm->stack_vm;
 	locked_vm = mm->locked_vm;
-	pinned_vm = mm->pinned_vm;
+	pinned_vm = atomic64_read(&mm->pinned_vm);
 
 	mmput(mm);
 
