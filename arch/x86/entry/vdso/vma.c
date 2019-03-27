@@ -15,6 +15,7 @@
 #include <linux/cpu.h>
 #include <linux/ptrace.h>
 #include <linux/time_namespace.h>
+#include <linux/jump_label.h>
 #include <asm/pvclock.h>
 #include <asm/vgtod.h>
 #include <asm/proto.h>
@@ -31,6 +32,36 @@
 unsigned int __read_mostly vdso64_enabled = 1;
 #endif
 
+#ifdef CONFIG_TIME_NS
+static __init void apply_jump_tables(struct vdso_jump_entry *ent, unsigned long nr)
+{
+	while (nr--) {
+		void *code_addr	= (void *)ent + ent->code;
+		long target_addr = (long) ent->target - (ent->code + JUMP_LABEL_NOP_SIZE);
+		((char *)code_addr)[0] = 0xe9; /* JMP rel32 */
+		*((long *)(code_addr + 1)) = (long)target_addr;
+
+		ent++;
+	}
+}
+
+static __init void init_timens(struct vdso_image *image)
+{
+	struct vdso_jump_entry *entries;
+
+	image->text_timens = vmalloc_32(image->size);
+	if (WARN_ON(image->text_timens == NULL))
+		return;
+
+	memcpy(image->text_timens, image->text, image->size);
+
+	entries = image->text_timens + image->jump_table;
+	apply_jump_tables(entries, image->jump_table_len / sizeof(struct vdso_jump_entry));
+}
+#else
+static inline void init_timens(struct vdso_image *image) {}
+#endif
+
 void __init init_vdso_image(struct vdso_image *image)
 {
 	BUG_ON(image->size % PAGE_SIZE != 0);
@@ -38,13 +69,7 @@ void __init init_vdso_image(struct vdso_image *image)
 	apply_alternatives((struct alt_instr *)(image->text + image->alt),
 			   (struct alt_instr *)(image->text + image->alt +
 						image->alt_len));
-#ifdef CONFIG_TIME_NS
-	image->text_timens = vmalloc_32(image->size);
-	if (WARN_ON(image->text_timens == NULL))
-		return;
-
-	memcpy(image->text_timens, image->text, image->size);
-#endif
+	init_timens(image);
 }
 
 struct linux_binprm;
