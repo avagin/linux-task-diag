@@ -135,8 +135,17 @@ struct timekeeper {
 
 #ifdef CONFIG_GENERIC_TIME_VSYSCALL
 
+#ifdef CONFIG_HAVE_GENERIC_VDSO
+
+void update_vsyscall(struct timekeeper *tk);
+void update_vsyscall_tz(void);
+
+#else
+
 extern void update_vsyscall(struct timekeeper *tk);
 extern void update_vsyscall_tz(void);
+
+#endif /* CONFIG_HAVE_GENERIC_VDSO */
 
 #else
 
