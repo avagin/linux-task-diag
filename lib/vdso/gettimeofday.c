@@ -32,7 +32,7 @@
 extern u8 timens_page
 	__attribute__((visibility("hidden")));
 
-notrace static __always_inline void clk_to_ns(clockid_t clk, struct timespec *ts)
+notrace static __always_inline void clk_to_ns(clockid_t clk, struct __kernel_timespec *ts)
 {
 	struct timens_offsets *timens = (struct timens_offsets *) &timens_page;
 	struct timespec64 *offset64;
@@ -45,6 +45,7 @@ notrace static __always_inline void clk_to_ns(clockid_t clk, struct timespec *ts
 		break;
 	case CLOCK_BOOTTIME:
 		offset64 = &timens->boottime;
+		break;
 	default:
 		return;
 	}
@@ -61,7 +62,7 @@ notrace static __always_inline void clk_to_ns(clockid_t clk, struct timespec *ts
 	}
 }
 #else
-notrace static __always_inline void clk_to_ns(clockid_t clk, struct timespec *ts) {}
+notrace static __always_inline void clk_to_ns(clockid_t clk, struct __kernel_timespec *ts) {}
 #endif
 
 static notrace int do_hres(const struct vdso_data *vd,
