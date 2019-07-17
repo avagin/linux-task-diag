@@ -24,6 +24,20 @@ union jump_code_union {
 	} __attribute__((packed));
 };
 
+__init void apply_vdso_jump_labels(struct vdso_jump_entry *ent, unsigned long nr)
+{
+	while (nr--) {
+		void *code_addr	= (void *)ent + ent->code;
+		union jump_code_union jmp;
+
+		jmp.jump	= 0xe9; /* JMP rel32 */
+		jmp.offset	= ent->target - ent->code - JUMP_LABEL_NOP_SIZE;
+		memcpy(code_addr, &jmp, JUMP_LABEL_NOP_SIZE);
+
+		ent++;
+	}
+}
+
 static void bug_at(unsigned char *ip, int line)
 {
 	/*
