@@ -8,6 +8,7 @@
 #include <linux/kernel.h>
 #include <linux/hrtimer_defs.h>
 #include <linux/timens_offsets.h>
+#include <linux/jump_label.h>
 #include <vdso/datapage.h>
 #include <vdso/helpers.h>
 
@@ -42,6 +43,8 @@ u64 vdso_calc_delta(u64 cycles, u64 last, u64 mask, u32 mult)
 #ifdef CONFIG_TIME_NS
 extern u8 timens_page
 	__attribute__((visibility("hidden")));
+
+#define timens_static_branch_unlikely vdso_static_branch_unlikely
 
 notrace static __always_inline void clk_to_ns(clockid_t clk, struct __kernel_timespec *ts)
 {
@@ -79,6 +82,7 @@ notrace static __always_inline void clk_to_ns(clockid_t clk, struct __kernel_tim
 }
 #else
 notrace static __always_inline void clk_to_ns(clockid_t clk, struct __kernel_timespec *ts) {}
+notrace static __always_inline bool timens_static_branch_unlikely(void) { return false; }
 #endif
 
 static int do_hres(const struct vdso_data *vd, clockid_t clk,
@@ -108,7 +112,8 @@ static int do_hres(const struct vdso_data *vd, clockid_t clk,
 	ts->tv_sec = sec + __iter_div_u64_rem(ns, NSEC_PER_SEC, &ns);
 	ts->tv_nsec = ns;
 
-	clk_to_ns(clk, ts);
+	if (timens_static_branch_unlikely())
+		clk_to_ns(clk, ts);
 
 	return 0;
 }
@@ -125,7 +130,8 @@ static void do_coarse(const struct vdso_data *vd, clockid_t clk,
 		ts->tv_nsec = vdso_ts->nsec;
 	} while (unlikely(vdso_read_retry(vd, seq)));
 
-	clk_to_ns(clk, ts);
+	if (timens_static_branch_unlikely())
+		clk_to_ns(clk, ts);
 }
 
 static __maybe_unused int
