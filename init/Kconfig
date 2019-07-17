@@ -1072,6 +1072,7 @@ config UTS_NS
 config TIME_NS
 	bool "TIME namespace"
 	depends on ARCH_HAS_VDSO_TIME_NS
+	depends on JUMP_LABEL
 	default y
 	help
 	  In this namespace boottime and monotonic clocks can be set.

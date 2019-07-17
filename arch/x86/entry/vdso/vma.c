@@ -15,6 +15,7 @@
 #include <linux/cpu.h>
 #include <linux/ptrace.h>
 #include <linux/time_namespace.h>
+#include <linux/jump_label.h>
 #include <asm/pvclock.h>
 #include <asm/vgtod.h>
 #include <asm/proto.h>
@@ -31,6 +32,29 @@
 unsigned int __read_mostly vdso64_enabled = 1;
 #endif
 
+#ifdef CONFIG_TIME_NS
+static __init void init_timens(struct vdso_image *image)
+{
+	struct vdso_jump_entry *entries;
+	unsigned long entries_nr;
+
+	if (WARN_ON(image->jump_table == -1UL))
+		return;
+
+	image->text_timens = vmalloc_32(image->size);
+	if (WARN_ON(image->text_timens == NULL))
+		return;
+
+	memcpy(image->text_timens, image->text, image->size);
+
+	entries = image->text_timens + image->jump_table;
+	entries_nr = image->jump_table_len / sizeof(struct vdso_jump_entry);
+	apply_vdso_jump_labels(entries, entries_nr);
+}
+#else
+static inline void init_timens(struct vdso_image *image) {}
+#endif
+
 void __init init_vdso_image(struct vdso_image *image)
 {
 	BUG_ON(image->size % PAGE_SIZE != 0);
@@ -38,13 +62,7 @@ void __init init_vdso_image(struct vdso_image *image)
 	apply_alternatives((struct alt_instr *)(image->text + image->alt),
 			   (struct alt_instr *)(image->text + image->alt +
 						image->alt_len));
-#ifdef CONFIG_TIME_NS
-	image->text_timens = vmalloc_32(image->size);
-	if (WARN_ON(image->text_timens == NULL))
-		return;
-
-	memcpy(image->text_timens, image->text, image->size);
-#endif
+	init_timens(image);
 }
 
 struct linux_binprm;
