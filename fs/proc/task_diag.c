@@ -393,7 +393,6 @@ static int fill_task_stat(struct task_struct *task, struct sk_buff *skb, int who
 	struct task_diag_stat *st;
 	struct nlattr *attr;
 
-	int priority, nice;
 	int num_threads = 0;
 	unsigned long cmin_flt = 0, cmaj_flt = 0;
 	unsigned long  min_flt = 0,  maj_flt = 0;
@@ -445,12 +444,6 @@ static int fill_task_stat(struct task_struct *task, struct sk_buff *skb, int who
 		task_cputime_adjusted(task, &utime, &stime);
 		gtime = task_gtime(task);
 	}
-
-	/* scale priority and nice values from timeslices to -20..20 */
-	/* to make it look like a "normal" Unix priority/nice value  */
-	priority = task_prio(task);
-	nice = task_nice(task);
-
 
 	st->minflt	= min_flt;
 	st->cminflt	= cmin_flt;
