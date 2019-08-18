@@ -96,4 +96,10 @@ static inline bool itimerspec64_valid(const struct itimerspec64 *its)
  */
 #define time_after32(a, b)	((s32)((u32)(b) - (u32)(a)) < 0)
 #define time_before32(b, a)	time_after32(a, b)
+
+struct timens_offset {
+	s64	sec;
+	u64	nsec;
+};
+
 #endif
