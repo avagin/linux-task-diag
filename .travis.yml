@@ -1,0 +1,34 @@
+language: c
+sudo: required
+dist: trusty
+cache: ccache
+env:
+  global:
+    - secure: "gwF/Dyxg1ClifQZGSa7Ar9dm7YE9C37/s2YHQ5gFYNAa28ekR6sVFJ2WuMSWzyQ2V0/68DEtiZICIn2WbBVh9GbbsklNbb6JBGV8kMwLOaF9vZommfdUOzzkbVBa8tL+HY2XB5RUZQ4Cl7bbehLS4a09+lkZpvwGtRfi34Nc1Fo="
+install:
+  - sudo apt-get update
+  - sudo apt-get install -qq --no-install-recommends protobuf-c-compiler libprotobuf-c0-dev libaio-dev libprotobuf-dev protobuf-compiler python-ipaddr libcap-dev libnl-3-dev gcc-multilib libc6-dev-i386 gdb bash python-protobuf libnet-dev util-linux asciidoc xmlto libnl-route-3-dev kexec-tools libssl-dev libelf-dev strace ccache
+jobs:
+  include:
+    - stage: kernel
+      script: sudo ./scripts/travis-ci kernel
+      env:
+        - KASAN=0
+    - stage: kernel
+      script: sudo ./scripts/travis-ci kernel
+      env:
+        - KASAN=1
+    - stage: zdtm
+      script: sudo ./scripts/travis-ci local
+      env:
+        - KASAN=0
+    - stage: zdtm
+      script: sudo ./scripts/travis-ci local
+      env:
+        - KASAN=1
+stages:
+  - kernel
+  - zdtm
+after_failure:
+  - sudo dmesg
+group: deprecated-2017Q2
