@@ -61,9 +61,12 @@ ktime_t do_timens_ktime_to_host(clockid_t clockid, ktime_t tim,
 				struct timens_offsets *offsets);
 static inline ktime_t timens_ktime_to_host(clockid_t clockid, ktime_t tim)
 {
-	struct timens_offsets *offsets = &current->nsproxy->time_ns->offsets;
+	struct time_namespace *ns = current->nsproxy->time_ns;
 
-	return do_timens_ktime_to_host(clockid, tim, offsets);
+	if (ns == &init_time_ns)
+		return tim;
+
+	return do_timens_ktime_to_host(clockid, tim, &ns->offsets);
 }
 
 #else
