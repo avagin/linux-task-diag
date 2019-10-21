@@ -38,14 +38,7 @@ u64 vdso_calc_delta(u64 cycles, u64 last, u64 mask, u32 mult)
 }
 #endif
 
-#ifndef CONFIG_TIME_NS
-static __always_inline
-const struct vdso_data *__arch_get_timens_vdso_data(void)
-{
-	return NULL;
-}
-#endif
-
+#ifdef CONFIG_TIME_NS
 static int do_hres_timens(const struct vdso_data *vdns, clockid_t clk,
 		      struct __kernel_timespec *ts)
 {
@@ -82,6 +75,18 @@ static int do_hres_timens(const struct vdso_data *vdns, clockid_t clk,
 
 	return 0;
 }
+#else
+static __always_inline
+const struct vdso_data *__arch_get_timens_vdso_data(void)
+{
+       return NULL;
+}
+
+static int do_hres_timens(const struct vdso_data *vdns, clockid_t clk,
+		      struct __kernel_timespec *ts) {
+	return -EINVAL;
+}
+#endif
 
 static int do_hres(const struct vdso_data *vd, clockid_t clk,
 		   struct __kernel_timespec *ts)
@@ -134,6 +139,7 @@ static int do_hres(const struct vdso_data *vd, clockid_t clk,
 	return 0;
 }
 
+#ifdef CONFIG_TIME_NS
 static void do_coarse_timens(const struct vdso_data *vdns, clockid_t clk,
 			 struct __kernel_timespec *ts)
 {
@@ -161,6 +167,10 @@ static void do_coarse_timens(const struct vdso_data *vdns, clockid_t clk,
 	ts->tv_sec = sec + __iter_div_u64_rem(nsec, NSEC_PER_SEC, &nsec);
 	ts->tv_nsec = nsec;
 }
+#else
+static void do_coarse_timens(const struct vdso_data *vdns, clockid_t clk,
+			 struct __kernel_timespec *ts) {}
+#endif
 
 static void do_coarse(const struct vdso_data *vd, clockid_t clk,
 		      struct __kernel_timespec *ts)
