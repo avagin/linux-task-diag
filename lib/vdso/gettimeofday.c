@@ -43,11 +43,20 @@ static int do_hres_timens(const struct vdso_data *vdns, clockid_t clk,
 		      struct __kernel_timespec *ts)
 {
 	const struct vdso_data *vd = __arch_get_timens_vdso_data();
-	const struct vdso_timestamp *vdso_ts = &vd->basetime[clk];
+	const struct vdso_timestamp *vdso_ts;
 	const struct timens_offset *offs = &vdns->offset[clk];
 	u64 cycles, last, ns;
+	u32 seq, msk;
 	s64 sec;
-	u32 seq;
+
+	msk = 1U << clk;
+	if (msk & VDSO_HRES)
+		vd = &vd[CS_HRES_COARSE];
+	else if (msk & VDSO_RAW)
+		vd = &vd[CS_RAW];
+	else
+		return -1;
+	vdso_ts = &vd->basetime[clk];
 
 	do {
 		seq = vdso_read_begin(vd);
