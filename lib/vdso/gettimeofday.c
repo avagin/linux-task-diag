@@ -97,7 +97,7 @@ static int do_hres_timens(const struct vdso_data *vdns, clockid_t clk,
 }
 #endif
 
-static int do_hres(const struct vdso_data *vd, clockid_t clk,
+static __always_inline int do_hres(const struct vdso_data *vd, clockid_t clk,
 		   struct __kernel_timespec *ts)
 {
 	const struct vdso_timestamp *vdso_ts = &vd->basetime[clk];
@@ -181,7 +181,7 @@ static void do_coarse_timens(const struct vdso_data *vdns, clockid_t clk,
 			 struct __kernel_timespec *ts) {}
 #endif
 
-static void do_coarse(const struct vdso_data *vd, clockid_t clk,
+static __always_inline void do_coarse(const struct vdso_data *vd, clockid_t clk,
 		      struct __kernel_timespec *ts)
 {
 	const struct vdso_timestamp *vdso_ts = &vd->basetime[clk];
