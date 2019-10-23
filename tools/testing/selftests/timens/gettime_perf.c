@@ -59,11 +59,13 @@ int main(int argc, char *argv[])
 	time_t offset = 10;
 	int nsfd;
 
-	ksft_set_plan(4);
+	ksft_set_plan(8);
 
 	fill_function_pointers();
 
 	test(CLOCK_MONOTONIC, "monotonic", false);
+	test(CLOCK_MONOTONIC_COARSE, "monotonic-coarse", false);
+	test(CLOCK_MONOTONIC_RAW, "monotonic-raw", false);
 	test(CLOCK_BOOTTIME, "boottime", false);
 
 	nscheck();
@@ -84,6 +86,8 @@ int main(int argc, char *argv[])
 		return pr_perror("setns");
 
 	test(CLOCK_MONOTONIC, "monotonic", true);
+	test(CLOCK_MONOTONIC_COARSE, "monotonic-coarse", false);
+	test(CLOCK_MONOTONIC_RAW, "monotonic-raw", false);
 	test(CLOCK_BOOTTIME, "boottime", true);
 
 	ksft_exit_pass();
