@@ -14,6 +14,7 @@ done
 for i in `seq 3`; do
 	taskset 0x4  ./gettime_perf_cold ns > $1/gettime_perf_cold.ns.log.$i
 done
+exit 0
 
 for i in `seq 2`; do
 (
