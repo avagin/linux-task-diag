@@ -35,6 +35,13 @@ part of VVAR into user processes and use offsets from VDSO calls.
 Now offsets are implemented for CLOCK_MONOTONIC and CLOCK_BOOTTIME
 clocks.
 
+v7..v8 Changes:
+* Fix compile-time errors:
+  - on architectures without the support of time namespaces.
+  - when CONFIG_POSIX_TIMERS isn't set.
+* Added checks in selftests for CONFIG_POSIX_TIMERS.
+* Inline do_hres and do_coarse.
+
 v6..v7 Changes:
 * Based on Andy & Thomas suggestions and the patches that Thomas kindely
   sent, reworked from two VDSO code images into trick with odd seq
@@ -77,35 +84,54 @@ We wrote two small benchmarks. The first one gettime_perf.c calls
 clock_gettime() in a loop for 3 seconds. It shows us performance with
 a hot CPU cache (more clock_gettime() cycles - the better):
 
-        | before    | CONFIG_TIME_NS=n | host      | inside timens
---------------------------------------------------------------
-        | 153242367 | 153567617        | 150933203 | 139310914
-        | 153324800 | 153115132        | 150919828 | 139299761
-        | 153125401 | 153686868        | 150930471 | 139273917
-        | 153399355 | 153694866        | 151083410 | 139286081
-        | 153489417 | 153739716        | 150997262 | 139146403
-        | 153494270 | 153724332        | 150035651 | 138835612
------------------------------------------------------------
-avg     | 153345935 | 153588088        | 150816637 | 139192114
-diff %  | 100       | 100.1            | 98.3      | 90.7
--------------------------------------------------------------
-stdev % | 0.09      | 0.15              |0.25      | 0.13
+The first table shows performance of clock_gettime() in the root time
+namespace.
 
+        | before    | TIME_NS=n | TIMENS=y
+-------------------------------------------
+        | 150363883 | 167076184 | 164979177
+        | 150616056 | 167348942 | 165202727
+        | 150679279 | 167235485 | 165230267
+        | 150622312 | 167078735 | 165284077
+        | 150706992 | 167301837 | 165372663
+        | 150563707 | 167207900 | 165395728
+-------------------------------------------
+avg     | 150592038 | 167208180 | 165244106
+diff %  | 100       | 111       | 109.7
+-------------------------------------------
+stdev % | 0.08      | 0.07      | 0.1
 
-        | after     | after 2/  | TIME_NS=n | host      | inside timens
----------------------------------------------------------------------
-        | 150363883 | 167436557 | 167076184 | 164979177 | 138133479
-        | 150616056 | 167591998 | 167348942 | 165202727 | 139047394
-        | 150679279 | 167463886 | 167235485 | 165230267 | 139284611
-        | 150622312 | 167549189 | 167078735 | 165284077 | 139263753
-        | 150706992 | 167601158 | 167301837 | 165372663 | 139175419
-        | 150563707 | 167441422 | 167207900 | 165395728 | 139334291
----------------------------------------------------------------------
-avg     | 150592038 | 167514035 | 167208180 | 165244106 | 139039824
-diff %  | 89.9      | 100       | 99.8      | 98.6      | 83
----------------------------------------------------------------------
-stdev % | 0.08      | 0.05      | 0.07      | 0.1       | 0.3
+We can see the 11% performance improvement when CONFIG_TIME_NS is
+disabled. This is achieved by adding the unlikely hint into
+vdso_read_begin() and inlining do_hres() and do_coarse().
 
+When CONFIG_TIME_NS is enabled, there is one more clobbered register in
+the __vdso_clock_gettime function. And this fact explains the performance
+difference between the two right columns.
+
+The second table shows the performance of clock_gettime in a non-root
+time namespace.
+
+        | before     |  host      | inside timens
+----------------------------------------------
+        | 150363883 |  164979177 | 138133479
+        | 150616056 |  165202727 | 139047394
+        | 150679279 |  165230267 | 139284611
+        | 150622312 |  165284077 | 139263753
+        | 150706992 |  165372663 | 139175419
+        | 150563707 |  165395728 | 139334291
+----------------------------------------------
+avg     | 150592038 |  165244106 | 139039824
+diff %  | 100       |  109.7     | 92.3
+----------------------------------------------
+stdev % | 0.08      |  0.1       | 0.3
+
+In a sub-namespace, the performance hit is 7-8%. The bigger difference
+between root and non-root namespaces can be explained by the fact that
+do_{hres,coarse}_timens are not inlined. Inlining these functions
+improves performance in a sub-namespace, but there will be more
+clobbered registers in __vdso_clock_gettime what will decrease the
+performance in the root namespace.
 
 The gettime_perf_cold test does 10K iterations. In each iteration, it
 drops cpu caches for vdso pages, clflush() is used for this, then it runs
