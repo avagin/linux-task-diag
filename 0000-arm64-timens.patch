@@ -1,0 +1,55 @@
+From 1b31c34705fa1013f4079af12f21f3970d9dd9c8 Mon Sep 17 00:00:00 2001
+From: Andrei Vagin <avagin@gmail.com>
+Date: Mon, 3 Feb 2020 08:05:34 -0800
+Subject: [PATCH v3 0/6] arm64: add the time namespace support
+
+Allocate the time namespace page among VVAR pages and add the logic
+to handle faults on VVAR properly.
+
+If a task belongs to a time namespace then the VVAR page which contains
+the system wide VDSO data is replaced with a namespace specific page
+which has the same layout as the VVAR page. That page has vdso_data->seq
+set to 1 to enforce the slow path and vdso_data->clock_mode set to
+VCLOCK_TIMENS to enforce the time namespace handling path.
+
+The extra check in the case that vdso_data->seq is odd, e.g. a concurrent
+update of the VDSO data is in progress, is not really affecting regular
+tasks which are not part of a time namespace as the task is spin waiting
+for the update to finish and vdso_data->seq to become even again.
+
+If a time namespace task hits that code path, it invokes the corresponding
+time getter function which retrieves the real VVAR page, reads host time
+and then adds the offset for the requested clock which is stored in the
+special VVAR page.
+
+v2: Code cleanups suggested by Vincenzo.
+v3: use OPTIMIZER_HIDE_VAR() instead of inline assembly in
+    __arch_get_timens_vdso_data.
+
+Cc: Vincenzo Frascino <vincenzo.frascino@arm.com>
+Cc: Thomas Gleixner <tglx@linutronix.de>
+Cc: Dmitry Safonov <dima@arista.com>
+
+v3 on github (if someone prefers `git pull` to `git am`):
+https://github.com/avagin/linux-task-diag/tree/arm64/timens-v3
+
+Andrei Vagin (6):
+  arm64/vdso: use the fault callback to map vvar pages
+  arm64/vdso: Zap vvar pages when switching to a time namespace
+  arm64/vdso: Add time napespace page
+  arm64/vdso: Handle faults on timens page
+  arm64/vdso: Restrict splitting VVAR VMA
+  arm64: enable time namespace support
+
+ arch/arm64/Kconfig                            |   1 +
+ .../include/asm/vdso/compat_gettimeofday.h    |  11 ++
+ arch/arm64/include/asm/vdso/gettimeofday.h    |   8 ++
+ arch/arm64/kernel/vdso.c                      | 134 ++++++++++++++++--
+ arch/arm64/kernel/vdso/vdso.lds.S             |   3 +-
+ arch/arm64/kernel/vdso32/vdso.lds.S           |   3 +-
+ include/vdso/datapage.h                       |   1 +
+ 7 files changed, 147 insertions(+), 14 deletions(-)
+
+-- 
+2.24.1
+
