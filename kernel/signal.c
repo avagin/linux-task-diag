@@ -2650,6 +2650,11 @@ relock:
 		if (!signr)
 			break; /* will return 0 */
 
+		if (current->exec_mm.ctx) {
+			restore_vm_exec_context(current_pt_regs());
+			current_pt_regs()->ax = signr;
+		}
+
 		if (unlikely(current->ptrace) && signr != SIGKILL) {
 			signr = ptrace_signal(signr, &ksig->info);
 			if (!signr)

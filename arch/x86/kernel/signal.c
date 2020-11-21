@@ -27,6 +27,8 @@
 #include <linux/context_tracking.h>
 #include <linux/entry-common.h>
 #include <linux/syscalls.h>
+#include <linux/sched/mm.h>
+#include <linux/vmacache.h>
 
 #include <asm/processor.h>
 #include <asm/ucontext.h>
@@ -36,6 +38,7 @@
 #include <asm/mce.h>
 #include <asm/sighandling.h>
 #include <asm/vm86.h>
+#include <asm/mmu_context.h>
 
 #ifdef CONFIG_X86_64
 #include <linux/compat.h>
@@ -896,3 +899,114 @@ badframe:
 	return 0;
 }
 #endif
+
+static long swap_vm_exec_context(struct sigcontext __user *uctx)
+{
+	struct sigcontext ctx = {};
+	sigset_t set = {};
+
+
+	if (copy_from_user(&ctx, uctx, CONTEXT_COPY_SIZE))
+		return -EFAULT;
+	if (!user_access_begin(uctx, sizeof(*uctx)))
+		return -EFAULT;
+	unsafe_put_sigcontext(uctx, NULL, current_pt_regs(), (&set), Efault);
+	user_access_end();
+
+	if (__restore_sigcontext(current_pt_regs(), &ctx, 0))
+		goto badframe;
+
+	return 0;
+Efault:
+	user_access_end();
+badframe:
+	signal_fault(current_pt_regs(), uctx, "swap_vm_exec_context");
+	return -EFAULT;
+}
+
+static void swap_mm(struct mm_struct *prev_mm, struct mm_struct *target_mm)
+{
+	struct task_struct *tsk = current;
+	struct mm_struct *active_mm;
+
+	task_lock(tsk);
+
+	sync_mm_rss(prev_mm);
+
+	vmacache_flush(tsk);
+
+	active_mm = tsk->active_mm;
+	if (active_mm != target_mm) {
+		 mmgrab(target_mm);
+		 tsk->active_mm = target_mm;
+	}
+	tsk->mm = target_mm;
+	switch_mm(active_mm, target_mm, tsk);
+	task_unlock(tsk);
+#ifdef finish_arch_post_lock_switch
+	finish_arch_post_lock_switch();
+#endif
+
+	if (active_mm != target_mm)
+		 mmdrop(active_mm);
+}
+
+void restore_vm_exec_context(struct pt_regs *regs)
+{
+	struct sigcontext __user *uctx;
+	struct mm_struct *prev_mm, *target_mm;
+
+	uctx = current->exec_mm.ctx;
+	current->exec_mm.ctx = NULL;
+
+	target_mm = current->exec_mm.mm;
+	current->exec_mm.mm = NULL;
+	prev_mm = current->mm;
+
+	swap_mm(prev_mm, target_mm);
+
+	mmput(prev_mm);
+	mmdrop(target_mm);
+
+	swap_vm_exec_context(uctx);
+}
+
+SYSCALL_DEFINE3(process_vm_exec, pid_t, pid, struct sigcontext __user *, uctx, unsigned long, flags)
+{
+	struct task_struct *tsk;
+	struct mm_struct *prev_mm, *mm;
+	long ret = -ESRCH;
+
+	tsk = find_get_task_by_vpid(pid);
+	if (!tsk) {
+		ret = -ESRCH;
+		goto err;
+	}
+	mm = mm_access(tsk, PTRACE_MODE_ATTACH_REALCREDS);
+	put_task_struct(tsk);
+	if (!mm || IS_ERR(mm)) {
+		ret = IS_ERR(mm) ? PTR_ERR(mm) : -ESRCH;
+		goto err;
+	}
+
+	current_pt_regs()->ax = 0;
+	ret = swap_vm_exec_context(uctx);
+	if (ret < 0) {
+		mmput(mm);
+		goto err;
+	}
+
+	tsk = current;
+	current->exec_mm.ctx = uctx;
+	current->exec_mm.mm = tsk->mm;
+	current->exec_mm.flags = flags;
+	prev_mm = tsk->mm;
+
+	mmgrab(prev_mm);
+	swap_mm(prev_mm, mm);
+	ret = current_pt_regs()->ax;
+
+	return ret;
+err:
+	return ret;
+}
