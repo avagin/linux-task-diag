@@ -27,6 +27,8 @@
 #include <linux/context_tracking.h>
 #include <linux/entry-common.h>
 #include <linux/syscalls.h>
+#include <linux/sched/mm.h>
+#include <linux/vmacache.h>
 
 #include <asm/processor.h>
 #include <asm/ucontext.h>
@@ -36,6 +38,7 @@
 #include <asm/mce.h>
 #include <asm/sighandling.h>
 #include <asm/vm86.h>
+#include <asm/mmu_context.h>
 
 #ifdef CONFIG_X86_64
 #include <linux/compat.h>
@@ -79,6 +82,9 @@ static void force_valid_ss(struct pt_regs *regs)
 # define CONTEXT_COPY_SIZE	sizeof(struct sigcontext)
 #endif
 
+static int __restore_sigcontext(struct pt_regs *regs,
+			      struct sigcontext __user *sc,
+			      unsigned long uc_flags);
 static int restore_sigcontext(struct pt_regs *regs,
 			      struct sigcontext __user *usc,
 			      unsigned long uc_flags)
@@ -91,39 +97,46 @@ static int restore_sigcontext(struct pt_regs *regs,
 	if (copy_from_user(&sc, usc, CONTEXT_COPY_SIZE))
 		return -EFAULT;
 
+	return __restore_sigcontext(regs, &sc, uc_flags);
+}
+
+static int __restore_sigcontext(struct pt_regs *regs,
+			      struct sigcontext __user *sc,
+			      unsigned long uc_flags)
+{
 #ifdef CONFIG_X86_32
-	set_user_gs(regs, sc.gs);
-	regs->fs = sc.fs;
-	regs->es = sc.es;
-	regs->ds = sc.ds;
+	set_user_gs(regs, sc->gs);
+	regs->fs = sc->fs;
+	regs->es = sc->es;
+	regs->ds = sc->ds;
 #endif /* CONFIG_X86_32 */
 
-	regs->bx = sc.bx;
-	regs->cx = sc.cx;
-	regs->dx = sc.dx;
-	regs->si = sc.si;
-	regs->di = sc.di;
-	regs->bp = sc.bp;
-	regs->ax = sc.ax;
-	regs->sp = sc.sp;
-	regs->ip = sc.ip;
+	regs->bx = sc->bx;
+	regs->cx = sc->cx;
+	regs->dx = sc->dx;
+	regs->si = sc->si;
+	regs->di = sc->di;
+	regs->bp = sc->bp;
+	regs->ax = sc->ax;
+	regs->sp = sc->sp;
+	regs->ip = sc->ip;
 
 #ifdef CONFIG_X86_64
-	regs->r8 = sc.r8;
-	regs->r9 = sc.r9;
-	regs->r10 = sc.r10;
-	regs->r11 = sc.r11;
-	regs->r12 = sc.r12;
-	regs->r13 = sc.r13;
-	regs->r14 = sc.r14;
-	regs->r15 = sc.r15;
+	regs->r8 = sc->r8;
+	regs->r9 = sc->r9;
+	regs->r10 = sc->r10;
+	regs->r11 = sc->r11;
+	regs->r12 = sc->r12;
+	regs->r13 = sc->r13;
+	regs->r14 = sc->r14;
+	regs->r15 = sc->r15;
 #endif /* CONFIG_X86_64 */
 
 	/* Get CS/SS and force CPL3 */
-	regs->cs = sc.cs | 0x03;
-	regs->ss = sc.ss | 0x03;
+	regs->cs = sc->cs | 0x03;
+	regs->ss = sc->ss | 0x03;
 
-	regs->flags = (regs->flags & ~FIX_EFLAGS) | (sc.flags & FIX_EFLAGS);
+	regs->flags = (regs->flags & ~FIX_EFLAGS) | (sc->flags & FIX_EFLAGS);
 	/* disable syscall checks */
 	regs->orig_ax = -1;
 
@@ -136,7 +149,7 @@ static int restore_sigcontext(struct pt_regs *regs,
 		force_valid_ss(regs);
 #endif
 
-	return fpu__restore_sig((void __user *)sc.fpstate,
+	return fpu__restore_sig((void __user *)sc->fpstate,
 			       IS_ENABLED(CONFIG_X86_32));
 }
 
@@ -888,3 +901,114 @@ badframe:
 	return 0;
 }
 #endif
+
+static long swap_vm_exec_context(struct sigcontext __user *uctx)
+{
+	struct sigcontext ctx = {};
+	sigset_t set = {};
+
+
+	if (copy_from_user(&ctx, uctx, CONTEXT_COPY_SIZE))
+		return -EFAULT;
+	if (!user_access_begin(uctx, sizeof(*uctx)))
+		return -EFAULT;
+	unsafe_put_sigcontext(uctx, NULL, current_pt_regs(), (&set), Efault);
+	user_access_end();
+
+	if (__restore_sigcontext(current_pt_regs(), &ctx, 0))
+		goto badframe;
+
+	return 0;
+Efault:
+	user_access_end();
+badframe:
+	signal_fault(current_pt_regs(), uctx, "swap_vm_exec_context");
+	return -EFAULT;
+}
+
+static void swap_mm(struct mm_struct *prev_mm, struct mm_struct *target_mm)
+{
+	struct task_struct *tsk = current;
+	struct mm_struct *active_mm;
+
+	task_lock(tsk);
+
+	sync_mm_rss(prev_mm);
+
+	vmacache_flush(tsk);
+
+	active_mm = tsk->active_mm;
+	if (active_mm != target_mm) {
+		 mmgrab(target_mm);
+		 tsk->active_mm = target_mm;
+	}
+	tsk->mm = target_mm;
+	switch_mm(active_mm, target_mm, tsk);
+	task_unlock(tsk);
+#ifdef finish_arch_post_lock_switch
+	finish_arch_post_lock_switch();
+#endif
+
+	if (active_mm != target_mm)
+		 mmdrop(active_mm);
+}
+
+void restore_vm_exec_context(struct pt_regs *regs)
+{
+	struct sigcontext __user *uctx;
+	struct mm_struct *prev_mm, *target_mm;
+
+	uctx = current->exec_mm.ctx;
+	current->exec_mm.ctx = NULL;
+
+	target_mm = current->exec_mm.mm;
+	current->exec_mm.mm = NULL;
+	prev_mm = current->mm;
+
+	swap_mm(prev_mm, target_mm);
+
+	mmput(prev_mm);
+	mmdrop(target_mm);
+
+	swap_vm_exec_context(uctx);
+}
+
+SYSCALL_DEFINE2(process_vm_exec, pid_t, pid, unsigned long, luctx)
+{
+	struct task_struct *tsk;
+	struct mm_struct *prev_mm, *mm;
+	long ret = -ESRCH;
+	struct sigcontext *uctx = (void *) luctx;
+
+	tsk = find_get_task_by_vpid(pid);
+	if (!tsk) {
+		ret = -ESRCH;
+		goto err;
+	}
+	mm = mm_access(tsk, PTRACE_MODE_ATTACH_REALCREDS);
+	put_task_struct(tsk);
+	if (!mm || IS_ERR(mm)) {
+		ret = IS_ERR(mm) ? PTR_ERR(mm) : -ESRCH;
+		goto err;
+	}
+
+	current_pt_regs()->ax = 0;
+	ret = swap_vm_exec_context(uctx);
+	if (ret < 0) {
+		mmput(mm);
+		goto err;
+	}
+
+	tsk = current;
+	current->exec_mm.ctx = uctx;
+	current->exec_mm.mm = tsk->mm;
+	prev_mm = tsk->mm;
+
+	mmgrab(prev_mm);
+	swap_mm(prev_mm, mm);
+	ret = current_pt_regs()->ax;
+
+	return ret;
+err:
+	return ret;
+}
