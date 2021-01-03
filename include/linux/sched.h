@@ -640,6 +640,7 @@ struct wake_q_node {
 struct exec_mm {
 	struct sigcontext *ctx;
 	struct mm_struct *mm;
+	unsigned long flags;
 };
 
 struct task_struct {
