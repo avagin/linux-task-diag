@@ -1,0 +1,66 @@
+From 5280c0454d18d68c6ddbc05292f4b8341a7ec38a Mon Sep 17 00:00:00 2001
+From: Andrei Vagin <avagin@gmail.com>
+Date: Fri, 15 Jan 2021 23:11:22 -0800
+Subject: [PATCH 0/4 v3] arm64/ptrace: allow to get all registers on syscall traps
+
+Here are two known problems with registers when a tracee is stopped in
+syscall traps.
+
+The first problem is about the x7 register that is used to indicate
+whether or not the stop has been signalled from syscall entry or syscall
+exit. This means that:
+
+- Any writes by the tracer to this register during the stop are
+  ignored/discarded.
+
+- The actual value of the register is not available during the stop,
+  so the tracer cannot save it and restore it later.
+
+For applications like the user-mode Linux or gVisor, it is critical to
+have access to the full set of registers in any moment. For example,
+they need to change values of all registers to emulate rt_sigreturn or
+execve and they need to have the full set of registers to build a signal
+frame.
+
+The second problem is that orig_x0 isn't exposed to user-space. orig_x0
+is recorded at the start of the syscall entry and then it is used for
+resetting the argument back to its original value during syscall
+restarts.
+
+This series extends the user_pt_regs structure with orig_x0 and orig_x7.
+This doesn't break the backward compatibility. There are two interfaces
+how user-space can receive user_pt_regs from the kernel. The first one
+is PTRACE_{GET,SET}REGSET. In this case, the user-space provides a
+buffer and its size and the kernel fills only the part that fits the
+size. The second interface is a core dump file where registers are
+written in a separate note and the user-space can parse only the part
+that it knows.
+
+Cc: Catalin Marinas <catalin.marinas@arm.com>
+Cc: Dave Martin <Dave.Martin@arm.com>
+Cc: Keno Fischer <keno@juliacomputing.com> 
+Cc: Oleg Nesterov <oleg@redhat.com>
+Cc: Will Deacon <will@kernel.org>
+
+Andrei Vagin (4):
+  arm64: expose orig_x0 in the user_pt_regs structure
+  arm64/ptrace: introduce orig_x7 in the user_pt_regs structure
+  selftest/arm64/ptrace: add a test for orig_x0
+  selftest/arm64/ptrace: add a test for orig_x7
+
+v2: use the ptrace option instead of adding a new regset.
+v3: append orig_x0 and orig_x7 to the user_pt_regs.
+
+ arch/arm64/include/asm/ptrace.h               |   5 +
+ arch/arm64/kernel/ptrace.c                    | 130 +++++++++++-----
+ include/uapi/linux/elf.h                      |   1 +
+ tools/testing/selftests/arm64/Makefile        |   2 +-
+ tools/testing/selftests/arm64/ptrace/Makefile |   6 +
+ .../arm64/ptrace/ptrace_syscall_regs_test.c   | 142 ++++++++++++++++++
+ 6 files changed, 246 insertions(+), 40 deletions(-)
+ create mode 100644 tools/testing/selftests/arm64/ptrace/Makefile
+ create mode 100644 tools/testing/selftests/arm64/ptrace/ptrace_syscall_regs_test.c
+
+-- 
+2.29.2
+
