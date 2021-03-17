@@ -1750,7 +1750,7 @@ static void tracehook_report_syscall(struct pt_regs *regs,
 				     enum ptrace_syscall_dir dir)
 {
 	int regno;
-	unsigned long saved_reg;
+	u64 _saved_reg, *saved_reg;
 
 	/*
 	 * We have some ABI weirdness here in the way that we handle syscall
@@ -1768,19 +1768,25 @@ static void tracehook_report_syscall(struct pt_regs *regs,
 	 * - Syscall stops behave differently to seccomp and pseudo-step traps
 	 *   (the latter do not nobble any registers).
 	 */
-	regno = (is_compat_task() ? 12 : 7);
-	saved_reg = regs->regs[regno];
+	if (is_compat_task()) {
+		regno = 12;
+		saved_reg = &_saved_reg;
+	} else {
+		regno = 7;
+		saved_reg = &regs->orig_x7;
+	}
+	*saved_reg = regs->regs[regno];
 	regs->regs[regno] = dir;
 
 	if (dir == PTRACE_SYSCALL_ENTER) {
 		if (tracehook_report_syscall_entry(regs))
 			forget_syscall(regs);
-		regs->regs[regno] = saved_reg;
+		regs->regs[regno] = *saved_reg;
 	} else if (!test_thread_flag(TIF_SINGLESTEP)) {
 		tracehook_report_syscall_exit(regs, 0);
-		regs->regs[regno] = saved_reg;
+		regs->regs[regno] = *saved_reg;
 	} else {
-		regs->regs[regno] = saved_reg;
+		regs->regs[regno] = *saved_reg;
 
 		/*
 		 * Signal a pseudo-step exception since we are stepping but

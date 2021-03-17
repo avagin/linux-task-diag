@@ -184,6 +184,7 @@ struct pt_regs {
 			u64 pc;
 			u64 pstate;
 			u64 orig_x0;
+			u64 orig_x7;
 		};
 	};
 #ifdef __AARCH64EB__

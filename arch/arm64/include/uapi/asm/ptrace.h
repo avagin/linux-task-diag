@@ -91,6 +91,7 @@ struct user_pt_regs {
 	__u64		pc;
 	__u64		pstate;
 	__u64		orig_x0;
+	__u64		orig_x7;
 };
 
 struct user_fpsimd_state {
