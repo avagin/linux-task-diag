@@ -637,11 +637,6 @@ struct wake_q_node {
 	struct wake_q_node *next;
 };
 
-struct exec_mm {
-	struct sigcontext *ctx;
-	struct mm_struct *mm;
-};
-
 struct task_struct {
 #ifdef CONFIG_THREAD_INFO_IN_TASK
 	/*
@@ -761,9 +756,6 @@ struct task_struct {
 
 	struct mm_struct		*mm;
 	struct mm_struct		*active_mm;
-
-
-	struct exec_mm			exec_mm;
 
 	/* Per-thread vma caching: */
 	struct vmacache			vmacache;

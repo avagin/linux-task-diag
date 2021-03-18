@@ -19,7 +19,6 @@
 #include <linux/nospec.h>
 #include <linux/syscalls.h>
 #include <linux/uaccess.h>
-#include <linux/vmacache.h>
 
 #ifdef CONFIG_XEN_PV
 #include <xen/xen-ops.h>
@@ -35,18 +34,10 @@
 #include <asm/io_bitmap.h>
 #include <asm/syscall.h>
 #include <asm/irq_stack.h>
-#include <linux/sched/mm.h>
-#include <asm/mmu_context.h>
 
 #ifdef CONFIG_X86_64
-
 __visible noinstr void do_syscall_64(unsigned long nr, struct pt_regs *regs)
 {
-	if (current->exec_mm.ctx) {
-		regs->ax = nr;
-		restore_vm_exec_context(regs);
-		return;
-	}
 	nr = syscall_enter_from_user_mode(regs, nr);
 
 	instrumentation_begin();
