@@ -79,51 +79,43 @@ static void force_valid_ss(struct pt_regs *regs)
 # define CONTEXT_COPY_SIZE	sizeof(struct sigcontext)
 #endif
 
-static int restore_sigcontext(struct pt_regs *regs,
-			      struct sigcontext __user *usc,
+static int __restore_sigcontext(struct pt_regs *regs,
+			      struct sigcontext __user *sc,
 			      unsigned long uc_flags)
 {
-	struct sigcontext sc;
-
-	/* Always make any pending restarted system calls return -EINTR */
-	current->restart_block.fn = do_no_restart_syscall;
-
-	if (copy_from_user(&sc, usc, CONTEXT_COPY_SIZE))
-		return -EFAULT;
-
 #ifdef CONFIG_X86_32
-	set_user_gs(regs, sc.gs);
-	regs->fs = sc.fs;
-	regs->es = sc.es;
-	regs->ds = sc.ds;
+	set_user_gs(regs, sc->gs);
+	regs->fs = sc->fs;
+	regs->es = sc->es;
+	regs->ds = sc->ds;
 #endif /* CONFIG_X86_32 */
 
-	regs->bx = sc.bx;
-	regs->cx = sc.cx;
-	regs->dx = sc.dx;
-	regs->si = sc.si;
-	regs->di = sc.di;
-	regs->bp = sc.bp;
-	regs->ax = sc.ax;
-	regs->sp = sc.sp;
-	regs->ip = sc.ip;
+	regs->bx = sc->bx;
+	regs->cx = sc->cx;
+	regs->dx = sc->dx;
+	regs->si = sc->si;
+	regs->di = sc->di;
+	regs->bp = sc->bp;
+	regs->ax = sc->ax;
+	regs->sp = sc->sp;
+	regs->ip = sc->ip;
 
 #ifdef CONFIG_X86_64
-	regs->r8 = sc.r8;
-	regs->r9 = sc.r9;
-	regs->r10 = sc.r10;
-	regs->r11 = sc.r11;
-	regs->r12 = sc.r12;
-	regs->r13 = sc.r13;
-	regs->r14 = sc.r14;
-	regs->r15 = sc.r15;
+	regs->r8 = sc->r8;
+	regs->r9 = sc->r9;
+	regs->r10 = sc->r10;
+	regs->r11 = sc->r11;
+	regs->r12 = sc->r12;
+	regs->r13 = sc->r13;
+	regs->r14 = sc->r14;
+	regs->r15 = sc->r15;
 #endif /* CONFIG_X86_64 */
 
 	/* Get CS/SS and force CPL3 */
-	regs->cs = sc.cs | 0x03;
-	regs->ss = sc.ss | 0x03;
+	regs->cs = sc->cs | 0x03;
+	regs->ss = sc->ss | 0x03;
 
-	regs->flags = (regs->flags & ~FIX_EFLAGS) | (sc.flags & FIX_EFLAGS);
+	regs->flags = (regs->flags & ~FIX_EFLAGS) | (sc->flags & FIX_EFLAGS);
 	/* disable syscall checks */
 	regs->orig_ax = -1;
 
@@ -136,9 +128,25 @@ static int restore_sigcontext(struct pt_regs *regs,
 		force_valid_ss(regs);
 #endif
 
-	return fpu__restore_sig((void __user *)sc.fpstate,
+	return fpu__restore_sig((void __user *)sc->fpstate,
 			       IS_ENABLED(CONFIG_X86_32));
 }
+
+static int restore_sigcontext(struct pt_regs *regs,
+			      struct sigcontext __user *usc,
+			      unsigned long uc_flags)
+{
+	struct sigcontext sc;
+
+	/* Always make any pending restarted system calls return -EINTR */
+	current->restart_block.fn = do_no_restart_syscall;
+
+	if (copy_from_user(&sc, usc, CONTEXT_COPY_SIZE))
+		return -EFAULT;
+
+	return __restore_sigcontext(regs, &sc, uc_flags);
+}
+
 
 static __always_inline int
 __unsafe_setup_sigcontext(struct sigcontext __user *sc, void __user *fpstate,
