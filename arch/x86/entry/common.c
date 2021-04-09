@@ -19,6 +19,7 @@
 #include <linux/nospec.h>
 #include <linux/syscalls.h>
 #include <linux/uaccess.h>
+#include <linux/process_vm_exec.h>
 
 #ifdef CONFIG_XEN_PV
 #include <xen/xen-ops.h>
@@ -38,6 +39,21 @@
 #ifdef CONFIG_X86_64
 __visible noinstr void do_syscall_64(unsigned long nr, struct pt_regs *regs)
 {
+#ifdef CONFIG_PROCESS_VM_EXEC
+	if (current->exec_mm && current->exec_mm->ctx) {
+		kernel_siginfo_t info = {
+			.si_signo = SIGSYS,
+			.si_call_addr = (void __user *)KSTK_EIP(current),
+			.si_arch = syscall_get_arch(current),
+			.si_syscall = nr,
+		};
+		restore_vm_exec_context(regs);
+		regs->ax = copy_siginfo_to_user(current->exec_mm->siginfo, &info);
+		syscall_exit_to_user_mode(regs);
+		return;
+	}
+#endif
+
 	nr = syscall_enter_from_user_mode(regs, nr);
 
 	instrumentation_begin();

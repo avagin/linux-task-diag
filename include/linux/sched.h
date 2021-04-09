@@ -64,6 +64,7 @@ struct signal_struct;
 struct task_delay_info;
 struct task_group;
 struct io_uring_task;
+struct exec_mm;
 
 /*
  * Task state bitmask. NOTE! These bits are also
@@ -637,6 +638,8 @@ struct wake_q_node {
 	struct wake_q_node *next;
 };
 
+struct exec_mm;
+
 struct task_struct {
 #ifdef CONFIG_THREAD_INFO_IN_TASK
 	/*
@@ -756,6 +759,10 @@ struct task_struct {
 
 	struct mm_struct		*mm;
 	struct mm_struct		*active_mm;
+
+#ifdef CONFIG_PROCESS_VM_EXEC
+	struct exec_mm			*exec_mm;
+#endif
 
 	/* Per-thread vma caching: */
 	struct vmacache			vmacache;

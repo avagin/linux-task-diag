@@ -27,6 +27,7 @@
 #include <linux/context_tracking.h>
 #include <linux/entry-common.h>
 #include <linux/syscalls.h>
+#include <linux/process_vm_exec.h>
 
 #include <asm/processor.h>
 #include <asm/ucontext.h>
@@ -816,6 +817,23 @@ void arch_do_signal(struct pt_regs *regs)
 {
 	struct ksignal ksig;
 
+#ifdef CONFIG_PROCESS_VM_EXEC
+	if (current->exec_mm && current->exec_mm->ctx) {
+		kernel_siginfo_t info;
+		int ret;
+
+		restore_vm_exec_context(current_pt_regs());
+
+		spin_lock_irq(&current->sighand->siglock);
+		ret = dequeue_signal(current, &current->exec_mm->sigmask, &info);
+		spin_unlock_irq(&current->sighand->siglock);
+
+		if (ret > 0)
+			ret = copy_siginfo_to_user(current->exec_mm->siginfo, &info);
+		regs->ax = ret;
+	}
+#endif
+
 	if (get_signal(&ksig)) {
 		/* Whee! Actually deliver the signal.  */
 		handle_signal(&ksig, regs);
@@ -894,5 +912,34 @@ COMPAT_SYSCALL_DEFINE0(x32_rt_sigreturn)
 badframe:
 	signal_fault(regs, frame, "x32 rt_sigreturn");
 	return 0;
+}
+#endif
+
+#ifdef CONFIG_PROCESS_VM_EXEC
+long swap_vm_exec_context(struct sigcontext __user *uctx)
+{
+	struct sigcontext ctx = {};
+	sigset_t set = {};
+
+
+	if (copy_from_user(&ctx, uctx, CONTEXT_COPY_SIZE))
+		return -EFAULT;
+	/* A floating point state is managed from user-space. */
+	if (ctx.fpstate != 0)
+		return -EINVAL;
+	if (!user_access_begin(uctx, sizeof(*uctx)))
+		return -EFAULT;
+	unsafe_put_sigcontext(uctx, NULL, current_pt_regs(), (&set), Efault);
+	user_access_end();
+
+	if (__restore_sigcontext(current_pt_regs(), &ctx, 0))
+		goto badframe;
+
+	return 0;
+Efault:
+	user_access_end();
+badframe:
+	signal_fault(current_pt_regs(), uctx, "swap_vm_exec_context");
+	return -EFAULT;
 }
 #endif
