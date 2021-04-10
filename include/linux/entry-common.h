@@ -285,6 +285,8 @@ static inline void arch_syscall_exit_tracehook(struct pt_regs *regs, bool step)
 }
 #endif
 
+void syscall_exit_to_user_mode_prepare(struct pt_regs *regs);
+
 /**
  * syscall_exit_to_user_mode - Handle work before returning to user mode
  * @regs:	Pointer to currents pt_regs

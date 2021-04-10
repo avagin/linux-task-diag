@@ -11,6 +11,7 @@
 #include <linux/sched/mm.h>
 #include <linux/syscalls.h>
 #include <linux/vmacache.h>
+#include <linux/entry-common.h>
 #include <linux/process_vm_exec.h>
 
 static void swap_mm(struct mm_struct *prev_mm, struct mm_struct *target_mm)
@@ -73,7 +74,7 @@ SYSCALL_DEFINE6(process_vm_exec, pid_t, pid, struct sigcontext __user *, uctx,
 
 	sigset_t mask;
 
-	if (flags)
+	if (flags & ~PROCESS_VM_EXEC_SYSCALL)
 		return -EINVAL;
 
 	if (sizemask != sizeof(sigset_t))
@@ -97,6 +98,9 @@ SYSCALL_DEFINE6(process_vm_exec, pid_t, pid, struct sigcontext __user *, uctx,
 	}
 
 	current_pt_regs()->ax = 0;
+	if (flags & PROCESS_VM_EXEC_SYSCALL)
+		syscall_exit_to_user_mode_prepare(current_pt_regs());
+
 	ret = swap_vm_exec_context(uctx);
 	if (ret < 0)
 		goto err_mm_put;
@@ -116,6 +120,29 @@ SYSCALL_DEFINE6(process_vm_exec, pid_t, pid, struct sigcontext __user *, uctx,
 
 	mmgrab(prev_mm);
 	swap_mm(prev_mm, mm);
+
+	if (flags & PROCESS_VM_EXEC_SYSCALL) {
+		struct pt_regs *regs = current_pt_regs();
+		kernel_siginfo_t info;
+		int sysno;
+
+		regs->orig_ax = regs->ax;
+		regs->ax = -ENOSYS;
+		sysno = syscall_get_nr(current, regs);
+
+		do_syscall_64(sysno, regs);
+
+		restore_vm_exec_context(regs);
+		info.si_signo = SIGSYS;
+		info.si_call_addr = (void __user *)KSTK_EIP(current);
+		info.si_arch = syscall_get_arch(current);
+		info.si_syscall = sysno;
+		ret = copy_siginfo_to_user(current->exec_mm->siginfo, &info);
+		current_pt_regs()->orig_ax = __NR_process_vm_exec;
+		current_pt_regs()->ax = -ENOSYS;
+		syscall_enter_from_user_mode_work(current_pt_regs(), current_pt_regs()->orig_ax);
+		return ret;
+	}
 
 	ret = current_pt_regs()->ax;
 

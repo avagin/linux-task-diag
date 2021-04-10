@@ -2,6 +2,8 @@
 #ifndef _LINUX_PROCESS_VM_EXEC_H
 #define _LINUX_PROCESS_VM_EXEC_H
 
+#include <uapi/linux/process_vm_exec.h>
+
 struct exec_mm {
 	struct sigcontext *ctx;
 	struct mm_struct *mm;
