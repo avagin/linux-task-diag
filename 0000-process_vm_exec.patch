@@ -1,0 +1,134 @@
+From 184d53ff0758799ac45e8ff33116138ed5956d6f Mon Sep 17 00:00:00 2001
+From: Andrei Vagin <avagin@gmail.com>
+Date: Mon, 12 Apr 2021 18:14:34 -0700
+Subject: [PATCH 0/4 POC] Allow executing code and syscalls in another address space
+
+We already have process_vm_readv and process_vm_writev to read and write
+to a process memory faster than we can do this with ptrace. And now it
+is time for process_vm_exec that allows executing code in an address
+space of another process. We can do this with ptrace but it is much
+slower.
+
+= Use-cases =
+
+Here are two known use-cases. The first one is “application kernel”
+sandboxes like User-mode Linux and gVisor. In this case, we have a
+process that runs the sandbox kernel and a set of stub processes that
+are used to manage guest address spaces. Guest code is executed in the
+context of stub processes but all system calls are intercepted and
+handled in the sandbox kernel. Right now, these sort of sandboxes use
+PTRACE_SYSEMU to trap system calls, but the process_vm_exec can
+significantly speed them up.
+
+Another use-case is CRIU (Checkpoint/Restore in User-space). Several
+process properties can be received only from the process itself. Right
+now, we use a parasite code that is injected into the process. We do
+this with ptrace but it is slow, unsafe, and tricky. process_vm_exec can
+simplify the process of injecting a parasite code and it will allow
+pre-dump memory without stopping processes. The pre-dump here is when we
+enable a memory tracker and dump the memory while a process is continue
+running. On each interaction we dump memory that has been changed from
+the previous iteration. In the final step, we will stop processes and
+dump their full state. Right now the most effective way to dump process
+memory is to create a set of pipes and splice memory into these pipes
+from the parasite code. With process_vm_exec, we will be able to call
+vmsplice directly. It means that we will not need to stop a process to
+inject the parasite code.
+
+= How it works =
+
+process_vm_exec has two modes:
+
+* Execute code in an address space of a target process and stop on any
+  signal or system call.
+
+* Execute a system call in an address space of a target process.
+
+int process_vm_exec(pid_t pid, struct sigcontext uctx,
+		    unsigned long flags, siginfo_t siginfo,
+		    sigset_t  *sigmask, size_t sizemask)
+
+PID - target process identification. We can consider to use pidfd
+instead of PID here.
+
+sigcontext contains a process state with what the process will be
+resumed after switching the address space and then when a process will
+be stopped, its sate will be saved back to sigcontext.
+
+siginfo is information about a signal that has interrupted the process.
+If a process is interrupted by a system call, signfo will contain a
+synthetic siginfo of the SIGSYS signal.
+
+sigmask is a set of signals that process_vm_exec returns via signfo.
+
+# How fast is it
+
+In the fourth patch, you can find two benchmarks that execute a function
+that calls system calls in a loop. ptrace_vm_exe uses ptrace to trap
+system calls, proces_vm_exec uses the process_vm_exec syscall to do the
+same thing.
+
+ptrace_vm_exec:   1446 ns/syscall
+ptrocess_vm_exec:  289 ns/syscall
+
+PS: This version is just a prototype. Its goal is to collect the initial
+feedback, to discuss the interfaces, and maybe to get some advice on
+implementation..
+
+Cc: Andrew Morton <akpm@linux-foundation.org>
+Cc: Andy Lutomirski <luto@kernel.org>
+Cc: Anton Ivanov <anton.ivanov@cambridgegreys.com>
+Cc: Christian Brauner <christian.brauner@ubuntu.com>
+Cc: Dmitry Safonov <0x7f454c46@gmail.com>
+Cc: Ingo Molnar <mingo@redhat.com>
+Cc: Jeff Dike <jdike@addtoit.com>
+Cc: Mike Rapoport <rppt@linux.ibm.com>
+Cc: Michael Kerrisk (man-pages) <mtk.manpages@gmail.com>
+Cc: Oleg Nesterov <oleg@redhat.com>
+Cc: Peter Zijlstra <peterz@infradead.org>
+Cc: Richard Weinberger <richard@nod.at>
+Cc: Thomas Gleixner <tglx@linutronix.de>
+
+Andrei Vagin (4):
+  signal: add a helper to restore a process state from sigcontex
+  arch/x86: implement the process_vm_exec syscall
+  arch/x86: allow to execute syscalls via process_vm_exec
+  selftests: add tests for process_vm_exec
+
+ arch/Kconfig                                  |  15 ++
+ arch/x86/Kconfig                              |   1 +
+ arch/x86/entry/common.c                       |  19 +++
+ arch/x86/entry/syscalls/syscall_64.tbl        |   1 +
+ arch/x86/include/asm/sigcontext.h             |   2 +
+ arch/x86/kernel/Makefile                      |   1 +
+ arch/x86/kernel/process_vm_exec.c             | 160 ++++++++++++++++++
+ arch/x86/kernel/signal.c                      | 125 ++++++++++----
+ include/linux/entry-common.h                  |   2 +
+ include/linux/process_vm_exec.h               |  17 ++
+ include/linux/sched.h                         |   7 +
+ include/linux/syscalls.h                      |   6 +
+ include/uapi/asm-generic/unistd.h             |   4 +-
+ include/uapi/linux/process_vm_exec.h          |   8 +
+ kernel/entry/common.c                         |   2 +-
+ kernel/fork.c                                 |   9 +
+ kernel/sys_ni.c                               |   2 +
+ .../selftests/process_vm_exec/Makefile        |   7 +
+ tools/testing/selftests/process_vm_exec/log.h |  26 +++
+ .../process_vm_exec/process_vm_exec.c         | 105 ++++++++++++
+ .../process_vm_exec/process_vm_exec_fault.c   | 111 ++++++++++++
+ .../process_vm_exec/process_vm_exec_syscall.c |  81 +++++++++
+ .../process_vm_exec/ptrace_vm_exec.c          | 111 ++++++++++++
+ 23 files changed, 785 insertions(+), 37 deletions(-)
+ create mode 100644 arch/x86/kernel/process_vm_exec.c
+ create mode 100644 include/linux/process_vm_exec.h
+ create mode 100644 include/uapi/linux/process_vm_exec.h
+ create mode 100644 tools/testing/selftests/process_vm_exec/Makefile
+ create mode 100644 tools/testing/selftests/process_vm_exec/log.h
+ create mode 100644 tools/testing/selftests/process_vm_exec/process_vm_exec.c
+ create mode 100644 tools/testing/selftests/process_vm_exec/process_vm_exec_fault.c
+ create mode 100644 tools/testing/selftests/process_vm_exec/process_vm_exec_syscall.c
+ create mode 100644 tools/testing/selftests/process_vm_exec/ptrace_vm_exec.c
+
+-- 
+2.29.2
+
