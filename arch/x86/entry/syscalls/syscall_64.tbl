@@ -362,6 +362,7 @@
 438	common	pidfd_getfd		sys_pidfd_getfd
 439	common	faccessat2		sys_faccessat2
 440	common	process_madvise		sys_process_madvise
+441	64	process_vm_exec		sys_process_vm_exec
 
 #
 # Due to a historical design error, certain syscalls are numbered differently

@@ -350,6 +350,8 @@ COND_SYSCALL(pkey_mprotect);
 COND_SYSCALL(pkey_alloc);
 COND_SYSCALL(pkey_free);
 
+/* execute in another address space */
+COND_SYSCALL(process_vm_exec);
 
 /*
  * Architecture specific weak syscall entries.

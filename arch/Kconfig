@@ -530,6 +530,21 @@ config SECCOMP_FILTER
 
 	  See Documentation/userspace-api/seccomp_filter.rst for details.
 
+config HAVE_ARCH_PROCESS_VM_EXEC
+	bool
+	help
+	  An arch should select this symbol to support the process_vm_exec system call.
+
+config PROCESS_VM_EXEC
+	prompt "Enable the process_vm_exec syscall"
+	def_bool y
+	depends on HAVE_ARCH_PROCESS_VM_EXEC
+	help
+	  process_vm_exec allows executing code and system calls in a specified
+	  address space.
+
+	  If unsure, say Y.
+
 config HAVE_ARCH_STACKLEAK
 	bool
 	help

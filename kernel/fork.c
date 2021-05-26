@@ -96,6 +96,7 @@
 #include <linux/kasan.h>
 #include <linux/scs.h>
 #include <linux/io_uring.h>
+#include <linux/process_vm_exec.h>
 
 #include <asm/pgalloc.h>
 #include <linux/uaccess.h>
@@ -461,6 +462,9 @@ void free_task(struct task_struct *tsk)
 	arch_release_task_struct(tsk);
 	if (tsk->flags & PF_KTHREAD)
 		free_kthread_struct(tsk);
+#ifdef CONFIG_PROCESS_VM_EXEC
+	free_exec_mm_struct(tsk);
+#endif
 	free_task_struct(tsk);
 }
 EXPORT_SYMBOL(free_task);
@@ -943,6 +947,11 @@ static struct task_struct *dup_task_struct(struct task_struct *orig, int node)
 #ifdef CONFIG_MEMCG
 	tsk->active_memcg = NULL;
 #endif
+
+#ifdef CONFIG_PROCESS_VM_EXEC
+	tsk->exec_mm = NULL;
+#endif
+
 	return tsk;
 
 free_stack:

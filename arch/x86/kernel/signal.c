@@ -27,6 +27,7 @@
 #include <linux/context_tracking.h>
 #include <linux/entry-common.h>
 #include <linux/syscalls.h>
+#include <linux/process_vm_exec.h>
 
 #include <asm/processor.h>
 #include <asm/ucontext.h>
@@ -794,6 +795,23 @@ void arch_do_signal(struct pt_regs *regs)
 {
 	struct ksignal ksig;
 
+#ifdef CONFIG_PROCESS_VM_EXEC
+	if (current->exec_mm && current->exec_mm->ctx) {
+		kernel_siginfo_t info;
+		int ret;
+
+		restore_vm_exec_context(current_pt_regs());
+
+		spin_lock_irq(&current->sighand->siglock);
+		ret = dequeue_signal(current, &current->exec_mm->sigmask, &info);
+		spin_unlock_irq(&current->sighand->siglock);
+
+		if (ret > 0)
+			ret = copy_siginfo_to_user(current->exec_mm->siginfo, &info);
+		regs->ax = ret;
+	}
+#endif
+
 	if (get_signal(&ksig)) {
 		/* Whee! Actually deliver the signal.  */
 		handle_signal(&ksig, regs);
@@ -872,5 +890,57 @@ COMPAT_SYSCALL_DEFINE0(x32_rt_sigreturn)
 badframe:
 	signal_fault(regs, frame, "x32 rt_sigreturn");
 	return 0;
+}
+#endif
+
+#ifdef CONFIG_PROCESS_VM_EXEC
+long swap_vm_exec_context(struct process_vm_exec_context __user *uctx)
+{
+	struct process_vm_exec_context ctx = {};
+	struct process_vm_exec_extctx extctx;
+	sigset_t set = {};
+
+	if (copy_from_user(&ctx, uctx, sizeof(ctx.version)))
+		return -EFAULT;
+	if (ctx.version != PROCESS_VM_EXEC_GOOGLE_V1)
+		return -EINVAL;
+
+	if (copy_from_user(&ctx, uctx, CONTEXT_COPY_SIZE +
+			   offsetof(struct process_vm_exec_context, sigctx)))
+		return -EFAULT;
+
+	/* A floating point state is managed from user-space. */
+	if (ctx.sigctx.fpstate != 0)
+		return -EINVAL;
+	if (ctx.extctx.gs_base >= TASK_SIZE_MAX ||
+	    ctx.extctx.fs_base >= TASK_SIZE_MAX)
+		return -EPERM;
+
+	if (!user_access_begin(&uctx->sigctx, sizeof(uctx->sigctx)))
+		return -EFAULT;
+	unsafe_put_sigcontext(&uctx->sigctx, NULL, current_pt_regs(), (&set), Efault);
+	user_access_end();
+
+	extctx.gs_base = current->thread.gsbase;
+	extctx.fs_base = current->thread.fsbase;
+	if (copy_to_user(&uctx->extctx, &extctx, sizeof(extctx)))
+		return -EFAULT;
+
+	__restore_sigcontext(current_pt_regs(), &ctx.sigctx, 0);
+
+	preempt_disable();
+	load_gs_index(0);
+	x86_gsbase_write_cpu_inactive(ctx.extctx.gs_base);
+	current->thread.gsbase = ctx.extctx.gs_base;
+	loadsegment(fs, 0);
+	x86_fsbase_write_cpu(ctx.extctx.fs_base);
+	current->thread.fsbase = ctx.extctx.fs_base;
+	preempt_enable();
+
+	return 0;
+Efault:
+	user_access_end();
+	signal_fault(current_pt_regs(), uctx, "swap_vm_exec_context");
+	return -EFAULT;
 }
 #endif
