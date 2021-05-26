@@ -802,6 +802,11 @@ void arch_do_signal(struct pt_regs *regs)
 
 		restore_vm_exec_context(current_pt_regs());
 
+		if (current->exec_mm->flags & PROCESS_VM_EXEC_SYSCALL) {
+			current_pt_regs()->orig_ax = __NR_process_vm_exec;
+			current_pt_regs()->ax = -ENOSYS;
+		}
+
 		spin_lock_irq(&current->sighand->siglock);
 		ret = dequeue_signal(current, &current->exec_mm->sigmask, &info);
 		spin_unlock_irq(&current->sighand->siglock);

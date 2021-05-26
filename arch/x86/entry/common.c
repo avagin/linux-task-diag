@@ -40,7 +40,10 @@
 __visible noinstr void do_syscall_64(unsigned long nr, struct pt_regs *regs)
 {
 #ifdef CONFIG_PROCESS_VM_EXEC
-	if (current->exec_mm && current->exec_mm->ctx) {
+	struct exec_mm *exec_mm = current->exec_mm;
+
+	if (exec_mm && exec_mm->ctx &&
+	    !(exec_mm->flags & PROCESS_VM_EXEC_SYSCALL)) {
 		kernel_siginfo_t info = {
 			.si_signo = SIGSYS,
 			.si_call_addr = (void __user *)KSTK_EIP(current),
