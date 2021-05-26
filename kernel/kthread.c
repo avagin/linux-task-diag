@@ -1257,12 +1257,11 @@ EXPORT_SYMBOL(kthread_destroy_worker);
  * kthread_use_mm - make the calling kthread operate on an address space
  * @mm: address space to operate on
  */
-void kthread_use_mm(struct mm_struct *mm)
+void use_mm(struct mm_struct *mm)
 {
 	struct mm_struct *active_mm;
 	struct task_struct *tsk = current;
 
-	WARN_ON_ONCE(!(tsk->flags & PF_KTHREAD));
 	WARN_ON_ONCE(tsk->mm);
 
 	task_lock(tsk);
@@ -1283,6 +1282,16 @@ void kthread_use_mm(struct mm_struct *mm)
 
 	if (active_mm != mm)
 		mmdrop(active_mm);
+}
+EXPORT_SYMBOL_GPL(use_mm);
+
+void kthread_use_mm(struct mm_struct *mm)
+{
+	struct task_struct *tsk = current;
+
+	WARN_ON_ONCE(!(tsk->flags & PF_KTHREAD));
+
+	use_mm(mm);
 
 	to_kthread(tsk)->oldfs = force_uaccess_begin();
 }
@@ -1297,9 +1306,17 @@ void kthread_unuse_mm(struct mm_struct *mm)
 	struct task_struct *tsk = current;
 
 	WARN_ON_ONCE(!(tsk->flags & PF_KTHREAD));
-	WARN_ON_ONCE(!tsk->mm);
-
 	force_uaccess_end(to_kthread(tsk)->oldfs);
+
+	unuse_mm(mm);
+}
+EXPORT_SYMBOL_GPL(kthread_unuse_mm);
+
+void unuse_mm(struct mm_struct *mm)
+{
+	struct task_struct *tsk = current;
+
+	WARN_ON_ONCE(!tsk->mm);
 
 	task_lock(tsk);
 	sync_mm_rss(mm);
@@ -1310,7 +1327,7 @@ void kthread_unuse_mm(struct mm_struct *mm)
 	local_irq_enable();
 	task_unlock(tsk);
 }
-EXPORT_SYMBOL_GPL(kthread_unuse_mm);
+EXPORT_SYMBOL_GPL(unuse_mm);
 
 #ifdef CONFIG_BLK_CGROUP
 /**
