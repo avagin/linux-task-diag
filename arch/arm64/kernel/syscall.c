@@ -6,6 +6,7 @@
 #include <linux/nospec.h>
 #include <linux/ptrace.h>
 #include <linux/syscalls.h>
+#include <linux/process_vm_exec.h>
 
 #include <asm/daifflags.h>
 #include <asm/debug-monitors.h>
@@ -36,7 +37,7 @@ static long __invoke_syscall(struct pt_regs *regs, syscall_fn_t syscall_fn)
 	return syscall_fn(regs);
 }
 
-static void invoke_syscall(struct pt_regs *regs, unsigned int scno,
+void invoke_syscall(struct pt_regs *regs, unsigned int scno,
 			   unsigned int sc_nr,
 			   const syscall_fn_t syscall_table[])
 {
@@ -100,6 +101,25 @@ static void el0_svc_common(struct pt_regs *regs, int scno, int sc_nr,
 
 	regs->orig_x0 = regs->regs[0];
 	regs->syscallno = scno;
+
+#ifdef CONFIG_PROCESS_VM_EXEC
+	{
+		struct exec_mm *exec_mm = current->exec_mm;
+
+		if (exec_mm && exec_mm->ctx &&
+		    !(exec_mm->flags & PROCESS_VM_EXEC_SYSCALL)) {
+			kernel_siginfo_t info = {
+				.si_signo = SIGSYS,
+				.si_call_addr = (void __user *)KSTK_EIP(current),
+				.si_arch = syscall_get_arch(current),
+				.si_syscall = scno,
+			};
+			restore_vm_exec_context(regs);
+			regs->regs[0] = copy_siginfo_to_user(current->exec_mm->siginfo, &info);
+			return;
+		}
+	}
+#endif
 
 	/*
 	 * BTI note:

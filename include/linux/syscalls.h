@@ -1374,6 +1374,7 @@ int __sys_setsockopt(int fd, int level, int optname, char __user *optval,
 
 #ifdef CONFIG_PROCESS_VM_EXEC
 void restore_vm_exec_context(struct pt_regs *regs);
+void swap_mm(struct mm_struct *prev_mm, struct mm_struct *target_mm);
 #else
 static inline void restore_vm_exec_context(struct pt_regs *regs) {}
 #endif

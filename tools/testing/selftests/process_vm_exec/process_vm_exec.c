@@ -31,6 +31,7 @@
 #define TEST_TIMEOUT 5
 #define TEST_STACK_SIZE 65536
 
+#if defined(__x86_64__)
 static inline long __syscall1(long n, long a1)
 {
 	unsigned long ret;
@@ -39,6 +40,21 @@ static inline long __syscall1(long n, long a1)
 
 	return ret;
 }
+#elif defined(__aarch64__)
+#define __asm_syscall(...) do { \
+        __asm__ __volatile__ ( "svc 0" \
+        : "=r"(x0) : __VA_ARGS__ : "memory", "cc"); \
+        return x0; \
+        } while (0)
+
+
+static inline long __syscall1(long n, long a)
+{
+        register long x8 __asm__("x8") = n;
+        register long x0 __asm__("x0") = a;
+        __asm_syscall("r"(x8), "0"(x0));
+}
+#endif
 
 int marker;
 
@@ -55,29 +71,37 @@ int main(int argc, char **argv)
 		.version = PROCESS_VM_EXEC_GOOGLE_V1,
 	};
 	struct timespec start, cur;
-	int status, ret;
+	int status, ret, i;
 	pid_t pid;
 	long sysnr;
 	void *stack;
 
 	ksft_set_plan(1);
 
-	stack = mmap(NULL, TEST_STACK_SIZE, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, 0, 0);
+	stack = mmap(NULL, TEST_STACK_SIZE, PROT_READ | PROT_WRITE,
+		     MAP_PRIVATE | MAP_ANONYMOUS, 0, 0);
 	if (stack == MAP_FAILED)
 		return pr_perror("mmap");
 
 	pid  = fork();
 	if (pid == 0) {
-		prctl(PR_SET_PDEATHSIG, SIGKILL, 0, 0, 0);
 		marker = TEST_MARKER;
+		prctl(PR_SET_PDEATHSIG, SIGKILL, 0, 0, 0);
 		kill(getpid(), SIGSTOP);
+		/* unreachable */
 		abort();
 		return 0;
 	}
 
+#if defined(__x86_64__)
 	ctx.sigctx.rip = (long)guest;
 	ctx.sigctx.rsp = (long)stack + TEST_STACK_SIZE;
 	ctx.sigctx.cs = 0x33;
+#elif defined(__aarch64__)
+	ctx.sigctx.pc = (long)guest;
+	ctx.sigctx.pstate = 0x40001000;
+        ctx.sigctx.sp = (long)stack + TEST_STACK_SIZE;
+#endif
 
 	sysnr = 0;
 	clock_gettime(CLOCK_MONOTONIC, &start);
@@ -102,7 +126,11 @@ int main(int argc, char **argv)
 			pr_fail("unexpected signal: %d", siginfo.si_signo);
 		if (siginfo.si_syscall != TEST_SYSCALL)
 			pr_fail("unexpected syscall: %d", siginfo.si_syscall);
+#if defined(__x86_64__)
 		ctx.sigctx.rax = TEST_SYSCALL_RET;
+#elif defined(__aarch64__)
+		ctx.sigctx.regs[0] = TEST_SYSCALL_RET;
+#endif
 		sysnr++;
 	}
 	ksft_test_result_pass("%ld ns/syscall\n", 1000000000 / sysnr);

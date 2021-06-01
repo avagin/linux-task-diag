@@ -51,6 +51,9 @@ __visible noinstr void do_syscall_64(unsigned long nr, struct pt_regs *regs)
 			.si_syscall = nr,
 		};
 		restore_vm_exec_context(regs);
+		regs->orig_ax = __NR_process_vm_exec;
+		regs->ax = -ENOSYS;
+		syscall_enter_from_user_mode(regs, __NR_process_vm_exec);
 		regs->ax = copy_siginfo_to_user(current->exec_mm->siginfo, &info);
 		syscall_exit_to_user_mode(regs);
 		return;

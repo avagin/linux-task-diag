@@ -20,6 +20,7 @@
 #include <linux/tracehook.h>
 #include <linux/ratelimit.h>
 #include <linux/syscalls.h>
+#include <linux/process_vm_exec.h>
 
 #include <asm/daifflags.h>
 #include <asm/debug-monitors.h>
@@ -875,6 +876,28 @@ static void do_signal(struct pt_regs *regs)
 		}
 	}
 
+#ifdef CONFIG_PROCESS_VM_EXEC
+	if (current->exec_mm && current->exec_mm->ctx) {
+		kernel_siginfo_t info;
+		int ret;
+
+		restore_vm_exec_context(current_pt_regs());
+
+		if (current->exec_mm->flags & PROCESS_VM_EXEC_SYSCALL) {
+			current_pt_regs()->syscallno = __NR_process_vm_exec;
+			current_pt_regs()->regs[0] = -ENOSYS;
+		}
+
+		spin_lock_irq(&current->sighand->siglock);
+		ret = dequeue_signal(current, &current->exec_mm->sigmask, &info);
+		spin_unlock_irq(&current->sighand->siglock);
+
+		if (ret > 0)
+			ret = copy_siginfo_to_user(current->exec_mm->siginfo, &info);
+		regs->regs[0] = ret;
+	}
+#endif
+
 	/*
 	 * Get the signal to deliver. When running under ptrace, at this point
 	 * the debugger may change all of our registers.
@@ -976,3 +999,72 @@ void __init minsigstksz_setup(void)
 		round_up(sizeof(struct frame_record), 16) +
 		16; /* max alignment padding */
 }
+
+#ifdef CONFIG_PROCESS_VM_EXEC
+static int copy_sigcontext_to_user(struct sigcontext *uctx, struct user_pt_regs *regs)
+{
+	int i, err;
+
+	err = 0;
+	for (i = 0; i < 31; i++)
+		__put_user_error(regs->regs[i], &uctx->regs[i],
+				 err);
+	__put_user_error(regs->sp, &uctx->sp, err);
+	__put_user_error(regs->pc, &uctx->pc, err);
+	__put_user_error(regs->pstate, &uctx->pstate, err);
+
+	__put_user_error(current->thread.fault_address, &uctx->fault_address, err);
+
+        return err;
+}
+
+static int copy_sigcontext_from_user(struct sigcontext *uctx, struct user_pt_regs *regs)
+{
+	int err, i;
+
+	err = 0;
+	for (i = 0; i < 31; i++)
+		__get_user_error(regs->regs[i], &uctx->regs[i],
+				 err);
+	__get_user_error(regs->sp, &uctx->sp, err);
+	__get_user_error(regs->pc, &uctx->pc, err);
+	__get_user_error(regs->pstate, &uctx->pstate, err);
+	err |= !valid_user_regs(regs, current);
+        return err;
+
+}
+
+long swap_vm_exec_context(struct process_vm_exec_context __user *uctx)
+{
+	struct user_pt_regs user_regs;
+	struct process_vm_exec_extctx extctx, prev_extctx;
+	uint64_t version;
+
+	if (copy_from_user(&version, &uctx->version, sizeof(uctx->version)))
+		return -EFAULT;
+	if (version != PROCESS_VM_EXEC_GOOGLE_V1)
+		return -EINVAL;
+
+	if (copy_from_user(&extctx, &uctx->extctx, sizeof(uctx->extctx)))
+		return -EFAULT;
+
+	prev_extctx.tp_value = read_sysreg(tpidr_el0);
+	prev_extctx.fault_code = current->thread.fault_code;
+
+	if (copy_to_user(&uctx->extctx, &prev_extctx, sizeof(uctx->extctx)))
+		return -EFAULT;
+
+	if (copy_sigcontext_from_user(&uctx->sigctx, &user_regs))
+		return -EFAULT;
+
+	if (copy_sigcontext_to_user(&uctx->sigctx, &current_pt_regs()->user_regs))
+		return -EFAULT;
+
+
+	write_sysreg(extctx.tp_value, tpidr_el0);
+	current_pt_regs()->user_regs = user_regs;
+	forget_syscall(current_pt_regs());
+
+	return 0;
+}
+#endif

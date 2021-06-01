@@ -56,6 +56,7 @@ int main(int argc, char **argv)
 	if (pipe(p))
 		return pr_perror("pipe");
 
+#if defined(__x86_64__)
 	ctx.sigctx.rax = __NR_write;
 	ctx.sigctx.rdi = p[1];
 	ctx.sigctx.rsi = (unsigned long) &test_val;
@@ -63,6 +64,15 @@ int main(int argc, char **argv)
 	ctx.sigctx.r10 = 0;
 	ctx.sigctx.r8 = 0;
 	ctx.sigctx.r9 = 0;
+#elif defined(__aarch64__)
+	ctx.sigctx.regs[8] = __NR_write;
+	ctx.sigctx.regs[0] = p[1];
+	ctx.sigctx.regs[1] = (unsigned long) &test_val;
+	ctx.sigctx.regs[2] = sizeof(test_val);
+	ctx.sigctx.regs[3] = 0;
+	ctx.sigctx.regs[4] = 0;
+	ctx.sigctx.regs[5] = 0;
+#endif
 	sigmask = 0xffffffff;
 	ret = syscall(__NR_process_vm_exec, pid, &ctx, PROCESS_VM_EXEC_SYSCALL,
 		      &siginfo, &sigmask, 8);
@@ -70,8 +80,13 @@ int main(int argc, char **argv)
 		return pr_perror("process_vm_exec");
 	if (siginfo.si_signo != 0)
 		return pr_fail("unexpected signal: %d", siginfo.si_signo);
+#if defined(__x86_64__)
 	if (ctx.sigctx.rax != sizeof(test_val))
 		pr_fail("unexpected rax: %lx", ctx.sigctx.rax);
+#elif defined(__aarch64__)
+	if (ctx.sigctx.regs[0] != sizeof(test_val))
+		pr_fail("unexpected r0: %lx", ctx.sigctx.regs[0]);
+#endif
 	if (kill(pid, SIGKILL))
 		return pr_perror("kill");
 	if (wait(NULL) != pid)

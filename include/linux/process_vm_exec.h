@@ -15,7 +15,6 @@ struct exec_mm {
 
 void free_exec_mm_struct(struct task_struct *tsk);
 
-struct process_vm_exec_context;
 extern long swap_vm_exec_context(struct process_vm_exec_context __user *uctx);
 
 #endif

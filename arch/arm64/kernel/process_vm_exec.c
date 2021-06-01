@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0
 
 #include <asm/syscall.h>
-#include <asm/sigframe.h>
 #include <asm/signal.h>
 #include <asm/mmu_context.h>
 #include <asm/sigcontext.h>
@@ -11,13 +10,19 @@
 #include <linux/sched/mm.h>
 #include <linux/syscalls.h>
 #include <linux/vmacache.h>
-#include <linux/entry-common.h>
 #include <linux/process_vm_exec.h>
+
+int syscall_trace_enter(struct pt_regs *regs);
+void syscall_trace_exit(struct pt_regs *regs);
+extern void invoke_syscall(struct pt_regs *regs, unsigned int scno,
+			   unsigned int sc_nr,
+			   const syscall_fn_t syscall_table[]);
 
 SYSCALL_DEFINE6(process_vm_exec, pid_t, pid, struct process_vm_exec_context __user *, uctx,
 		unsigned long, flags, siginfo_t __user *, uinfo,
 		sigset_t __user *, user_mask, size_t, sizemask)
 {
+	struct pt_regs *regs = current_pt_regs();
 	struct mm_struct *prev_mm, *mm;
 	struct task_struct *tsk;
 	long ret = -ESRCH;
@@ -55,9 +60,9 @@ SYSCALL_DEFINE6(process_vm_exec, pid_t, pid, struct process_vm_exec_context __us
 		current->exec_mm->ctx = NULL;
 	}
 
-	current_pt_regs()->ax = 0;
+	regs->regs[0] = 0;
 	if (flags & PROCESS_VM_EXEC_SYSCALL)
-		syscall_exit_to_user_mode_prepare(current_pt_regs());
+		syscall_trace_exit(regs);
 
 	ret = swap_vm_exec_context(uctx);
 	if (ret < 0)
@@ -74,25 +79,30 @@ SYSCALL_DEFINE6(process_vm_exec, pid_t, pid, struct process_vm_exec_context __us
 	swap_mm(prev_mm, mm);
 
 	if (flags & PROCESS_VM_EXEC_SYSCALL) {
-		struct pt_regs *regs = current_pt_regs();
-		int sysno;
+		u64 orig_x0 = regs->orig_x0;
+		int scno = regs->regs[8];
 
-		regs->orig_ax = regs->ax;
-		regs->ax = -ENOSYS;
-		sysno = syscall_get_nr(current, regs);
+		regs->syscallno = scno;
+		regs->orig_x0 = regs->regs[0];
 
-		do_syscall_64(sysno, regs);
+		scno = syscall_trace_enter(regs);
+
+		invoke_syscall(regs, scno, __NR_syscalls, sys_call_table);
+
+		syscall_trace_exit(regs);
 
 		if (current->exec_mm && current->exec_mm->ctx) {
 			restore_vm_exec_context(regs);
-			current_pt_regs()->orig_ax = __NR_process_vm_exec;
-			current_pt_regs()->ax = -ENOSYS;
+			forget_syscall(regs);
+			regs->syscallno = __NR_process_vm_exec;
+			regs->orig_x0 = orig_x0;
+			regs->regs[0] = orig_x0;
 		}
-		syscall_enter_from_user_mode_work(current_pt_regs(), current_pt_regs()->orig_ax);
+		scno = syscall_trace_enter(regs);
 		return 0;
 	}
 
-	ret = current_pt_regs()->ax;
+	ret = current_pt_regs()->regs[0];
 
 	return ret;
 err_mm_put:
