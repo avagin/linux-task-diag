@@ -31,11 +31,6 @@
 #define EMIT_VVAR(name, offset)	\
 	const size_t name ## _offset = offset;
 #include <asm/vvar.h>
-
-struct vdso_data *arch_get_vdso_data(void *vvar_page)
-{
-	return (struct vdso_data *)(vvar_page + _vdso_data_offset);
-}
 #undef EMIT_VVAR
 
 unsigned int vclocks_used __read_mostly;
@@ -98,6 +93,11 @@ static int vdso_mremap(const struct vm_special_mapping *sm,
 }
 
 #ifdef CONFIG_TIME_NS
+struct vdso_data *arch_get_vdso_data(void *vvar_page)
+{
+	return (struct vdso_data *)(vvar_page + _vdso_data_offset);
+}
+
 static struct page *find_timens_vvar_page(struct vm_area_struct *vma)
 {
 	if (likely(vma->vm_mm == current->mm))
