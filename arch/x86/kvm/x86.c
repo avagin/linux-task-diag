@@ -78,6 +78,7 @@
 #include <asm/intel_pt.h>
 #include <asm/emulate_prefix.h>
 #include <asm/sgx.h>
+#include <asm/syscall.h>
 #include <clocksource/hyperv_timer.h>
 
 #define CREATE_TRACE_POINTS
@@ -8518,6 +8519,71 @@ int kvm_vcpu_halt(struct kvm_vcpu *vcpu)
 	return __kvm_vcpu_halt(vcpu, KVM_MP_STATE_HALTED, KVM_EXIT_HLT);
 }
 EXPORT_SYMBOL_GPL(kvm_vcpu_halt);
+
+static __always_inline bool do_syscall_x64(struct pt_regs *regs, int nr)
+{
+	/*
+	 * Convert negative numbers to very high and thus out of range
+	 * numbers for comparisons.
+	 */
+	unsigned int unr = nr;
+
+	if (likely(unr < NR_syscalls)) {
+		unr = array_index_nospec(unr, NR_syscalls);
+		regs->ax = sys_call_table[unr](regs);
+		return true;
+	}
+	return false;
+}
+
+int gvisor_emulate_halt(struct kvm_vcpu *vcpu)
+{
+	int ret = kvm_skip_emulated_instruction(vcpu);
+	unsigned long kax = kvm_rax_read(vcpu);
+	struct pt_regs regs = {};
+	long rbx = kvm_rbx_read(vcpu);
+
+/* bazel-bin/pkg/ring0/entry_impl_amd64.s */
+#define CPU_REGISTERS		0x30
+#define GVISOR_SYSCALL		0x888
+	if (!vcpu->run->request_interrupt_window &&
+	    rbx == GVISOR_SYSCALL &&
+	    copy_from_user(&regs, (void *)kax + CPU_REGISTERS, sizeof(regs)) == 0) {
+		int nr = regs.ax;
+
+		if (nr < 0 || nr >= __NR_syscalls)
+			goto out;
+
+		switch (nr) {
+		case __NR_clone:
+		case __NR_rt_sigreturn:
+		case __NR_prctl:
+		case __NR_exit:
+		case __NR_exit_group:
+		case __NR_execve:
+		case __NR_execveat:
+		case __NR_mmap:
+		case __NR_rt_sigprocmask:
+		case __NR_ioctl:
+			goto out;
+		}
+
+		if (do_syscall_x64(&regs, regs.ax)) {
+			regs.ip += 2;
+			if (copy_to_user((void *)kax + CPU_REGISTERS, &regs, sizeof(regs))) {
+				BUG();
+			}
+			return 1;
+		}
+	}
+out:
+	/*
+	 * TODO: we might be squashing a GUESTDBG_SINGLESTEP-triggered
+	 * KVM_EXIT_DEBUG here.
+	 */
+	return kvm_vcpu_halt(vcpu) && ret;
+}
+EXPORT_SYMBOL_GPL(gvisor_emulate_halt);
 
 int kvm_emulate_halt(struct kvm_vcpu *vcpu)
 {

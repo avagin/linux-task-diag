@@ -5880,6 +5880,8 @@ void dump_vmcs(struct kvm_vcpu *vcpu)
 		       vmcs_read16(VIRTUAL_PROCESSOR_ID));
 }
 
+extern int gvisor_emulate_halt(struct kvm_vcpu *vcpu);
+
 /*
  * The guest has exited.  See if we can fix it or if we need userspace
  * assistance.
@@ -6011,6 +6013,10 @@ static int __vmx_handle_exit(struct kvm_vcpu *vcpu, fastpath_t exit_fastpath)
 
 	if (exit_reason.basic >= kvm_vmx_max_exit_handlers)
 		goto unexpected_vmexit;
+
+	if (exit_reason.basic == EXIT_REASON_HLT)
+		return gvisor_emulate_halt(vcpu);
+
 #ifdef CONFIG_RETPOLINE
 	if (exit_reason.basic == EXIT_REASON_MSR_WRITE)
 		return kvm_emulate_wrmsr(vcpu);
