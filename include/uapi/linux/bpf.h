@@ -4884,6 +4884,13 @@ union bpf_attr {
  *	Return
  *		0 if the system call was not executed.
  *		1 if the system call was executed.
+ *
+ * long bpf_copy_to_user(void *src, u32 size, const void *user_ptr)
+ *	Description
+ *		Copy *size* bytes from *dst* to user space address *user_ptr*.
+ *		This is a wrapper of **copy_to_user**\ ().
+ *	Return
+ *		0 on success, or a negative error in case of failure.
  */
 #define __BPF_FUNC_MAPPER(FN)		\
 	FN(unspec),			\
@@ -5063,6 +5070,7 @@ union bpf_attr {
 	FN(get_attach_cookie),		\
 	FN(task_pt_regs),		\
 	FN(syscall),			\
+	FN(copy_to_user),		\
 	/* */
 
 /* integer value in 'imm' field of BPF_CALL instruction selects which helper
