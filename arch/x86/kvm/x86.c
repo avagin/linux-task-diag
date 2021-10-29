@@ -59,6 +59,7 @@
 #include <linux/mem_encrypt.h>
 #include <linux/entry-kvm.h>
 #include <linux/suspend.h>
+#include <linux/filter.h>
 
 #include <trace/events/kvm.h>
 
@@ -8524,10 +8525,21 @@ static int __kvm_vcpu_halt(struct kvm_vcpu *vcpu, int state, int reason)
 	if (lapic_in_kernel(vcpu)) {
 		vcpu->arch.mp_state = state;
 		return 1;
-	} else {
-		vcpu->run->exit_reason = reason;
-		return 0;
 	}
+
+	vcpu->run->exit_reason = reason;
+
+	if (READ_ONCE(vcpu->kvm->kvm_bpf_prog)) {
+		int ret;
+
+		vcpu->run->kvm_valid_regs |= KVM_SYNC_X86_REGS;
+		store_regs(vcpu);
+
+		if (bpf_prog_run(vcpu->kvm->kvm_bpf_prog, vcpu->run) == 1)
+			return 1;
+	}
+
+	return 0;
 }
 
 int kvm_vcpu_halt(struct kvm_vcpu *vcpu)

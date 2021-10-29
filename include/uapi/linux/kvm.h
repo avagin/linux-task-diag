@@ -2006,5 +2006,6 @@ struct kvm_stats_desc {
 };
 
 #define KVM_GET_STATS_FD  _IO(KVMIO,  0xce)
+#define KVM_LOAD_PROG    _IOWR(KVMIO, 0xcd, int)
 
 #endif /* __LINUX_KVM_H */

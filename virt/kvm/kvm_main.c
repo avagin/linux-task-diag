@@ -4515,6 +4515,18 @@ static long kvm_vm_ioctl(struct file *filp,
 	case KVM_GET_STATS_FD:
 		r = kvm_vm_ioctl_get_stats_fd(kvm);
 		break;
+	case KVM_LOAD_PROG: {
+		struct bpf_prog *res = NULL;
+
+		res = bpf_prog_get(arg);
+		if (IS_ERR(res)) {
+			r = PTR_ERR(res);
+			break;
+		}
+		r = 0;
+		WRITE_ONCE(kvm->kvm_bpf_prog, res);
+		break;
+	}
 	default:
 		r = kvm_arch_vm_ioctl(filp, ioctl, arg);
 	}

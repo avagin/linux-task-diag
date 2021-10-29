@@ -623,6 +623,7 @@ struct kvm {
 	struct notifier_block pm_notifier;
 #endif
 	char stats_id[KVM_STATS_NAME_SIZE];
+	struct bpf_prog *kvm_bpf_prog;
 };
 
 #define kvm_err(fmt, ...) \
