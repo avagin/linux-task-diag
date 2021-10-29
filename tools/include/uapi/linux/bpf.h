@@ -4877,6 +4877,13 @@ union bpf_attr {
  *		Get the struct pt_regs associated with **task**.
  *	Return
  *		A pointer to struct pt_regs.
+ *
+ * long bpf_syscall(struct pt_regs *regs)
+ *	Description
+ *		Execute system call.
+ *	Return
+ *		0 if the system call was not executed.
+ *		1 if the system call was executed.
  */
 #define __BPF_FUNC_MAPPER(FN)		\
 	FN(unspec),			\
@@ -5055,6 +5062,7 @@ union bpf_attr {
 	FN(get_func_ip),		\
 	FN(get_attach_cookie),		\
 	FN(task_pt_regs),		\
+	FN(syscall),			\
 	/* */
 
 /* integer value in 'imm' field of BPF_CALL instruction selects which helper

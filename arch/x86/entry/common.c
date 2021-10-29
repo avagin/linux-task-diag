@@ -19,6 +19,7 @@
 #include <linux/nospec.h>
 #include <linux/syscalls.h>
 #include <linux/uaccess.h>
+#include <linux/filter.h>
 
 #ifdef CONFIG_XEN_PV
 #include <xen/xen-ops.h>
@@ -318,3 +319,19 @@ __visible noinstr void xen_pv_evtchn_do_upcall(struct pt_regs *regs)
 	}
 }
 #endif /* CONFIG_XEN_PV */
+
+#if CONFIG_BPF_SYSCALL
+BPF_CALL_1(bpf_syscall, struct pt_regs *, regs)
+{
+	if (do_syscall_x64(regs, regs->ax))
+		return 1;
+	return 0;
+}
+
+const struct bpf_func_proto bpf_syscall_proto = {
+	.func		= bpf_syscall,
+	.gpl_only	= false,
+	.ret_type	= RET_INTEGER,
+	.arg1_type	= ARG_ANYTHING,
+};
+#endif
