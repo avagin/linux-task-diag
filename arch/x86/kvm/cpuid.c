@@ -104,6 +104,10 @@ static int kvm_check_cpuid(struct kvm_vcpu *vcpu,
 			return -EINVAL;
 	}
 
+	best = cpuid_entry2_find(entries, nent, KVM_CPUID_FEATURES, 0);
+	if (best && (best->eax & (1<<KVM_FEATURE_PV_HOST_SYSCALL)))
+		return -EINVAL;
+
 	/*
 	 * Exposing dynamic xfeatures to the guest requires additional
 	 * enabling in the FPU, e.g. to expand the guest XSAVE state size.
@@ -271,6 +275,27 @@ static void __kvm_update_cpuid_runtime(struct kvm_vcpu *vcpu, struct kvm_cpuid_e
 		best->edx &= guest_supported_xcr0 >> 32;
 		best->ecx |= XFEATURE_MASK_FPSSE;
 	}
+}
+
+int kvm_vcpu_pv_set_host_syscall(struct kvm_vcpu *vcpu, bool set)
+{
+	struct kvm_cpuid_entry2 *best;
+
+	if (!vcpu->arch.pv_cpuid.enforce)
+		return -EINVAL;
+
+	best = kvm_find_cpuid_entry(vcpu, KVM_CPUID_FEATURES, 0);
+	if (!best)
+		return -EINVAL;
+
+	if (set)
+		best->eax |= 1 << KVM_FEATURE_PV_HOST_SYSCALL;
+	else
+		best->eax &= ~(1 << KVM_FEATURE_PV_HOST_SYSCALL);
+
+	kvm_update_pv_runtime(vcpu);
+
+	return 0;
 }
 
 void kvm_update_cpuid_runtime(struct kvm_vcpu *vcpu)

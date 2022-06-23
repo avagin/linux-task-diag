@@ -37,6 +37,9 @@
 #define KVM_FEATURE_HC_MAP_GPA_RANGE	16
 #define KVM_FEATURE_MIGRATION_CONTROL	17
 
+/* Features that are not controlled by KVM_SET_CPUID2. */
+#define KVM_FEATURE_PV_HOST_SYSCALL	31
+
 #define KVM_HINTS_REALTIME      0
 
 /* The last 8 bits are used to indicate how to interpret the flags field

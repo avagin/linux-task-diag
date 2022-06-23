@@ -5306,6 +5306,10 @@ static int kvm_vcpu_ioctl_enable_cap(struct kvm_vcpu *vcpu,
 			kvm_update_pv_runtime(vcpu);
 
 		return 0;
+
+	case KVM_CAP_PV_HOST_SYSCALL:
+		return kvm_vcpu_pv_set_host_syscall(vcpu, cap->args[0]);
+
 	default:
 		return -EINVAL;
 	}

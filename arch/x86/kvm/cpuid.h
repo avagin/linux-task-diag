@@ -219,10 +219,16 @@ static __always_inline void kvm_cpu_cap_check_and_set(unsigned int x86_feature)
 static __always_inline bool guest_pv_has(struct kvm_vcpu *vcpu,
 					 unsigned int kvm_feature)
 {
-	if (!vcpu->arch.pv_cpuid.enforce)
+	if (!vcpu->arch.pv_cpuid.enforce) {
+		if (kvm_feature == KVM_FEATURE_PV_HOST_SYSCALL)
+			return false;
+
 		return true;
+	}
 
 	return vcpu->arch.pv_cpuid.features & (1u << kvm_feature);
 }
+
+int kvm_vcpu_pv_set_host_syscall(struct kvm_vcpu *vcpu, bool set);
 
 #endif
