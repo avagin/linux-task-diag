@@ -190,3 +190,21 @@ the KVM_CAP_EXIT_HYPERCALL capability. Userspace must enable that capability
 before advertising KVM_FEATURE_HC_MAP_GPA_RANGE in the guest CPUID.  In
 addition, if the guest supports KVM_FEATURE_MIGRATION_CONTROL, userspace
 must also set up an MSR filter to process writes to MSR_KVM_MIGRATION_CONTROL.
+
+9. KVM_HC_HOST_SYSCALL
+---------------------
+:Architecture: x86
+:Status: active
+:Purpose: Execute a specified system call.
+
+- a0: pointer to a pt_regs structure in the host addess space.
+
+This hypercall lets a guest to execute host system calls. The first and only
+argument represents process registers that are used as input and output
+parameters.
+
+Returns 0 if the requested syscall has been executed. Otherwise, it returns an
+error code.
+
+**Implementation note**: The KVM_CAP_PV_HOST_SYSCALL capability has to be set
+to use this hypercall.

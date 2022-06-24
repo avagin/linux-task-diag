@@ -81,6 +81,7 @@
 #include <asm/emulate_prefix.h>
 #include <asm/sgx.h>
 #include <clocksource/hyperv_timer.h>
+#include <asm/syscall.h>
 
 #define CREATE_TRACE_POINTS
 #include "trace.h"
@@ -9253,6 +9254,27 @@ static int complete_hypercall_exit(struct kvm_vcpu *vcpu)
 	return kvm_skip_emulated_instruction(vcpu);
 }
 
+static int kvm_pv_host_syscall(unsigned long a0)
+{
+	struct pt_regs pt_regs = {};
+	unsigned long sysno;
+
+	if (copy_from_user(&pt_regs, (void *)a0, sizeof(pt_regs)))
+		return -EFAULT;
+
+	sysno = pt_regs.ax;
+	pt_regs.orig_ax = pt_regs.ax;
+	pt_regs.ax = -ENOSYS;
+
+	do_ksyscall_64(sysno, &pt_regs);
+
+	pt_regs.orig_ax = -1;
+	if (copy_to_user((void *)a0, &pt_regs, sizeof(pt_regs)))
+		return -EFAULT;
+
+	return 0;
+}
+
 int kvm_emulate_hypercall(struct kvm_vcpu *vcpu)
 {
 	unsigned long nr, a0, a1, a2, a3, ret;
@@ -9318,6 +9340,7 @@ int kvm_emulate_hypercall(struct kvm_vcpu *vcpu)
 		kvm_sched_yield(vcpu, a0);
 		ret = 0;
 		break;
+
 	case KVM_HC_MAP_GPA_RANGE: {
 		u64 gpa = a0, npages = a1, attrs = a2;
 
@@ -9340,6 +9363,16 @@ int kvm_emulate_hypercall(struct kvm_vcpu *vcpu)
 		vcpu->arch.complete_userspace_io = complete_hypercall_exit;
 		return 0;
 	}
+
+	case KVM_HC_HOST_SYSCALL:
+		if (!guest_pv_has(vcpu, KVM_FEATURE_PV_HOST_SYSCALL))
+			break;
+
+		kvm_vcpu_srcu_read_unlock(vcpu);
+		ret = kvm_pv_host_syscall(a0);
+		kvm_vcpu_srcu_read_lock(vcpu);
+		break;
+
 	default:
 		ret = -KVM_ENOSYS;
 		break;
