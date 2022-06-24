@@ -19,6 +19,7 @@
 #include <linux/nospec.h>
 #include <linux/syscalls.h>
 #include <linux/uaccess.h>
+#include <trace/events/syscalls.h>
 
 #ifdef CONFIG_XEN_PV
 #include <xen/xen-ops.h>
@@ -36,6 +37,55 @@
 #include <asm/irq_stack.h>
 
 #ifdef CONFIG_X86_64
+
+/*
+ * do_ksyscall_64 executes a system call. This helper can be used from the
+ * kernel code.
+ */
+bool do_ksyscall_64(int nr, struct pt_regs *regs)
+{
+	struct task_struct *task = current;
+	unsigned long work = READ_ONCE(current_thread_info()->syscall_work);
+	/*
+	 * Convert negative numbers to very high and thus out of range
+	 * numbers for comparisons.
+	 */
+	unsigned int unr = nr;
+
+#ifdef CONFIG_IA32_EMULATION
+	if (task->thread_info.status & TS_COMPAT)
+		return false;
+#endif
+
+	if (work & SYSCALL_WORK_SECCOMP) {
+		struct seccomp_data sd;
+		unsigned long args[6];
+
+		sd.nr = nr;
+		sd.arch = AUDIT_ARCH_X86_64;
+		syscall_get_arguments(task, regs, args);
+		sd.args[0] = args[0];
+		sd.args[1] = args[1];
+		sd.args[2] = args[2];
+		sd.args[3] = args[3];
+		sd.args[4] = args[4];
+		sd.args[5] = args[5];
+		sd.instruction_pointer = regs->ip;
+		if (__secure_computing(&sd) == -1)
+			return false;
+	}
+
+	if (likely(unr >= NR_syscalls))
+		return false;
+
+	unr = array_index_nospec(unr, NR_syscalls);
+
+	trace_sys_enter(regs, unr);
+	regs->ax = sys_call_table[unr](regs);
+	trace_sys_exit(regs, syscall_get_return_value(task, regs));
+	return true;
+}
+EXPORT_SYMBOL_GPL(do_ksyscall_64);
 
 static __always_inline bool do_syscall_x64(struct pt_regs *regs, int nr)
 {
