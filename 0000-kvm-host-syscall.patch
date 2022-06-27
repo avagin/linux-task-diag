@@ -57,6 +57,13 @@ In the Google kernel, we have a kvm-like subsystem designed especially
 for gVisor. This change is the first step of integrating it into the KVM
 code base and making it available to all Linux users.
 
+Cc: Paolo Bonzini <pbonzini@redhat.com>
+Cc: Sean Christopherson <seanjc@google.com>
+Cc: Wanpeng Li <wanpengli@tencent.com>
+Cc: Vitaly Kuznetsov <vkuznets@redhat.com>
+Cc: Jianfeng Tan <henry.tjf@antfin.com>
+Cc: Adin Scannell <ascannell@google.com>
+
 Andrei Vagin (5):
   kernel: add a new helper to execute system calls from kernel code
   kvm: add controls to enable/disable paravirtualized system calls

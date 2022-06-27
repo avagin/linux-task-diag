@@ -17,6 +17,7 @@
 
 #include "../kvm_util.h"
 
+#ifndef X86_EFLAGS_FIXED
 #define X86_EFLAGS_FIXED	 (1u << 1)
 
 #define X86_CR4_VME		(1ul << 0)
@@ -40,6 +41,7 @@
 #define X86_CR4_SMEP		(1ul << 20)
 #define X86_CR4_SMAP		(1ul << 21)
 #define X86_CR4_PKE		(1ul << 22)
+#endif
 
 /* CPUID.1.ECX */
 #define CPUID_VMX		(1ul << 5)
@@ -503,6 +505,7 @@ void __virt_pg_map(struct kvm_vm *vm, uint64_t vaddr, uint64_t paddr, int level)
 /*
  * Basic CPU control in CR0
  */
+#ifndef X86_CR0_PE
 #define X86_CR0_PE          (1UL<<0) /* Protection Enable */
 #define X86_CR0_MP          (1UL<<1) /* Monitor Coprocessor */
 #define X86_CR0_EM          (1UL<<2) /* Emulation */
@@ -514,6 +517,7 @@ void __virt_pg_map(struct kvm_vm *vm, uint64_t vaddr, uint64_t paddr, int level)
 #define X86_CR0_NW          (1UL<<29) /* Not Write-through */
 #define X86_CR0_CD          (1UL<<30) /* Cache Disable */
 #define X86_CR0_PG          (1UL<<31) /* Paging */
+#endif
 
 #define XSTATE_XTILE_CFG_BIT		17
 #define XSTATE_XTILE_DATA_BIT		18
