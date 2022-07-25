@@ -63,6 +63,8 @@ Cc: Wanpeng Li <wanpengli@tencent.com>
 Cc: Vitaly Kuznetsov <vkuznets@redhat.com>
 Cc: Jianfeng Tan <henry.tjf@antfin.com>
 Cc: Adin Scannell <ascannell@google.com>
+Cc: Konstantin Bogomolov <bogomolov@google.com>
+Cc: Etienne Perot <eperot@google.com>
 
 Andrei Vagin (5):
   kernel: add a new helper to execute system calls from kernel code
