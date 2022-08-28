@@ -31,6 +31,17 @@ void swake_up_locked(struct swait_queue_head *q)
 }
 EXPORT_SYMBOL(swake_up_locked);
 
+void swake_up_locked_on_current_cpu(struct swait_queue_head *q)
+{
+	struct swait_queue *curr;
+
+	if (list_empty(&q->task_list))
+		return;
+
+	curr = list_first_entry(&q->task_list, typeof(*curr), task_list);
+	try_to_wake_up(curr->task, TASK_NORMAL, WF_CURRENT_CPU);
+	list_del_init(&curr->task_list);
+}
 /*
  * Wake up all waiters. This is an interface which is solely exposed for
  * completions and not for general usage.
