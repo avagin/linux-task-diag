@@ -38,6 +38,18 @@ void complete(struct completion *x)
 }
 EXPORT_SYMBOL(complete);
 
+void complete_on_current_cpu(struct completion *x)
+{
+	unsigned long flags;
+
+	raw_spin_lock_irqsave(&x->wait.lock, flags);
+
+	if (x->done != UINT_MAX)
+		x->done++;
+	swake_up_locked_on_current_cpu(&x->wait);
+	raw_spin_unlock_irqrestore(&x->wait.lock, flags);
+}
+
 /**
  * complete_all: - signals all threads waiting on this completion
  * @x:  holds the state of this particular completion
