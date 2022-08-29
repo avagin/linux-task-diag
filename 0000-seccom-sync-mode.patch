@@ -1,0 +1,60 @@
+From 2e1eb4bb6a2fcf864d2cec4b21e88e9f513b91f8 Mon Sep 17 00:00:00 2001
+From: Andrei Vagin <avagin@gmail.com>
+Date: Mon, 29 Aug 2022 12:44:24 -0700
+Subject: [PATCH 0/4] seccomp: add the synchronous mode for seccomp_unotify
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+seccomp_unotify allows more privileged processes does actions on behalf
+of less privileged processes.
+
+In many cases, the workflow is fully synchronous. It means a target
+process triggers a system call and passes controls to a supervisor
+process that handles the system call and returns controls to the target
+process. In this context, "synchronous" means that only one process is
+running and another one is waiting.
+
+The new WF_CURRENT_CPU flag advises the scheduler to move the wakee to
+the current CPU. For such synchronous workflows, it makes context
+switches a few times faster.
+
+Right now, each interaction takes 12µs. With this patch, it takes about
+3µs.
+
+Cc: Andy Lutomirski <luto@amacapital.net>
+Cc: Christian Brauner <brauner@kernel.org>
+Cc: Dietmar Eggemann <dietmar.eggemann@arm.com>
+Cc: Kees Cook <keescook@chromium.org>
+Cc: Ingo Molnar <mingo@redhat.com>
+Cc: Juri Lelli <juri.lelli@redhat.com>
+Cc: Peter Oskolkov <posk@google.com>
+Cc: Peter Zijlstra <peterz@infradead.org>
+Cc: Tycho Andersen <tycho@tycho.pizza>
+Cc: Will Drewry <wad@chromium.org>
+Cc: Vincent Guittot <vincent.guittot@linaro.org>
+
+Andrei Vagin (3):
+  seccomp: don't use semaphore and wait_queue together
+  sched: add a few helpers to wake up tasks on the current cpu
+  seccomp: add the synchronous mode for seccomp_unotify
+
+Peter Oskolkov (1):
+  sched/umcg: add WF_CURRENT_CPU and externise ttwu
+
+ include/linux/completion.h   |  1 +
+ include/linux/swait.h        |  1 +
+ include/linux/wait.h         |  3 ++
+ include/uapi/linux/seccomp.h |  4 ++
+ kernel/sched/completion.c    | 12 ++++++
+ kernel/sched/core.c          |  5 +--
+ kernel/sched/fair.c          |  4 ++
+ kernel/sched/sched.h         | 13 ++++---
+ kernel/sched/swait.c         | 11 ++++++
+ kernel/sched/wait.c          |  5 +++
+ kernel/seccomp.c             | 73 +++++++++++++++++++++++++++++-------
+ 11 files changed, 110 insertions(+), 22 deletions(-)
+
+-- 
+2.37.2
+
