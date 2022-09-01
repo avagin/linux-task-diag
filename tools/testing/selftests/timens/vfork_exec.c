@@ -12,6 +12,11 @@
 #include <time.h>
 #include <unistd.h>
 #include <string.h>
+#include <fcntl.h>
+#include <sys/ioctl.h>
+#include <linux/nsfs.h>
+
+#define TIMENS_SET_SWITCH_ON_EXEC _IO(NSIO, 0x100)
 
 #include "log.h"
 #include "timens.h"
@@ -21,7 +26,7 @@
 int main(int argc, char *argv[])
 {
 	struct timespec now, tst;
-	int status, i;
+	int status, i, nsfd;
 	pid_t pid;
 
 	if (argc > 1) {
@@ -44,6 +49,13 @@ int main(int argc, char *argv[])
 
 	if (unshare_timens())
 		return 1;
+
+	nsfd = open("/proc/self/ns/time_for_children", O_RDONLY);
+	if (nsfd < 0)
+		return pr_perror("open");
+	if (ioctl(nsfd, TIMENS_SET_SWITCH_ON_EXEC))
+		return pr_perror("ioctl");
+	close(nsfd);
 
 	if (_settime(CLOCK_MONOTONIC, OFFSET))
 		return 1;

@@ -16,4 +16,6 @@
 /* Get owner UID (in the caller's user namespace) for a user namespace */
 #define NS_GET_OWNER_UID	_IO(NSIO, 0x4)
 
+#define TIMENS_SET_SWITCH_ON_EXEC _IO(NSIO, 0x100)
+
 #endif /* __LINUX_NSFS_H */

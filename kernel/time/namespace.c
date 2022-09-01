@@ -17,6 +17,7 @@
 #include <linux/cred.h>
 #include <linux/err.h>
 #include <linux/mm.h>
+#include <linux/nsfs.h>
 
 #include <vdso/datapage.h>
 
@@ -439,6 +440,18 @@ out:
 	return err;
 }
 
+static long timens_ioctl(struct ns_common *ns, unsigned int ioctl, unsigned long arg)
+{
+	struct time_namespace *time_ns = to_time_ns(ns);
+
+	switch (ioctl) {
+	case TIMENS_SET_SWITCH_ON_EXEC:
+		WRITE_ONCE(time_ns->switch_on_exec, true);
+		return 0;
+	}
+	return -ENOTTY;
+}
+
 const struct proc_ns_operations timens_operations = {
 	.name		= "time",
 	.type		= CLONE_NEWTIME,
@@ -446,6 +459,7 @@ const struct proc_ns_operations timens_operations = {
 	.put		= timens_put,
 	.install	= timens_install,
 	.owner		= timens_owner,
+	.ioctl		= timens_ioctl,
 };
 
 const struct proc_ns_operations timens_for_children_operations = {
@@ -456,6 +470,7 @@ const struct proc_ns_operations timens_for_children_operations = {
 	.put		= timens_put,
 	.install	= timens_install,
 	.owner		= timens_owner,
+	.ioctl		= timens_ioctl,
 };
 
 struct time_namespace init_time_ns = {

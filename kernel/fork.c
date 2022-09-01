@@ -2050,7 +2050,8 @@ static __latent_entropy struct task_struct *copy_process(
 	 * On vfork, the child process enters the target time namespace only
 	 * after exec.
 	 */
-	if ((clone_flags & (CLONE_VM | CLONE_VFORK)) == CLONE_VM) {
+	if ((clone_flags & CLONE_THREAD) ||
+	    (clone_flags & (CLONE_VM | CLONE_VFORK)) == CLONE_VM) {
 		if (nsp->time_ns != nsp->time_ns_for_children)
 			return ERR_PTR(-EINVAL);
 	}

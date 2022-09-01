@@ -22,6 +22,7 @@ struct proc_ns_operations {
 	int (*install)(struct nsset *nsset, struct ns_common *ns);
 	struct user_namespace *(*owner)(struct ns_common *ns);
 	struct ns_common *(*get_parent)(struct ns_common *ns);
+	long (*ioctl)(struct ns_common *ns, unsigned int ioctl, unsigned long arg);
 } __randomize_layout;
 
 extern const struct proc_ns_operations netns_operations;

@@ -24,6 +24,7 @@ struct time_namespace {
 	struct page		*vvar_page;
 	/* If set prevents changing offsets after any task joined namespace. */
 	bool			frozen_offsets;
+	bool			switch_on_exec;
 } __randomize_layout;
 
 extern struct time_namespace init_time_ns;

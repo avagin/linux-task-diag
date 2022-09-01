@@ -11,6 +11,7 @@
 #include <linux/user_namespace.h>
 #include <linux/nsfs.h>
 #include <linux/uaccess.h>
+#include <linux/nsfs.h>
 
 #include "internal.h"
 
@@ -210,6 +211,8 @@ static long ns_ioctl(struct file *filp, unsigned int ioctl,
 		uid = from_kuid_munged(current_user_ns(), user_ns->owner);
 		return put_user(uid, argp);
 	default:
+		if (ns->ops->ioctl)
+			return ns->ops->ioctl(ns, ioctl,  arg);
 		return -ENOTTY;
 	}
 }

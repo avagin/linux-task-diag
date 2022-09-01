@@ -979,12 +979,10 @@ static int exec_mmap(struct mm_struct *mm)
 {
 	struct task_struct *tsk;
 	struct mm_struct *old_mm, *active_mm;
-	bool vfork;
 	int ret;
 
 	/* Notify parent that we're no longer interested in the old VM */
 	tsk = current;
-	vfork = !!tsk->vfork_done;
 	old_mm = current->mm;
 	exec_mm_release(tsk, old_mm);
 	if (old_mm)
@@ -1030,7 +1028,7 @@ static int exec_mmap(struct mm_struct *mm)
 	vmacache_flush(tsk);
 	task_unlock(tsk);
 
-	if (vfork)
+	if (READ_ONCE(tsk->nsproxy->time_ns_for_children->switch_on_exec))
 		timens_on_fork(tsk->nsproxy, tsk);
 
 	if (old_mm) {
