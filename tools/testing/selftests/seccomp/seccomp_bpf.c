@@ -4243,6 +4243,94 @@ TEST(user_notification_addfd_rlimit)
 	close(memfd);
 }
 
+/* USER_NOTIF_BENCH_TIMEOUT is 100 miliseconds. */
+#define USER_NOTIF_BENCH_TIMEOUT  100000000ULL
+#define NSECS_PER_SEC            1000000000ULL
+
+#ifndef SECCOMP_USER_NOTIF_FD_SYNC_WAKE_UP
+#define SECCOMP_USER_NOTIF_FD_SYNC_WAKE_UP (1UL << 0)
+#define SECCOMP_IOCTL_NOTIF_SET_FLAGS  SECCOMP_IOW(4, __u64)
+#endif
+
+static uint64_t user_notification_sync_loop(struct __test_metadata *_metadata,
+					    char *test_name, int listener)
+{
+	struct timespec ts;
+	uint64_t start, end, nr;
+	struct seccomp_notif req = {};
+	struct seccomp_notif_resp resp = {};
+
+	clock_gettime(CLOCK_MONOTONIC, &ts);
+	start = ts.tv_nsec + ts.tv_sec * NSECS_PER_SEC;
+	for (end = start, nr = 0; end - start < USER_NOTIF_BENCH_TIMEOUT; nr++) {
+		memset(&req, 0, sizeof(req));
+		req.pid = 0;
+		ASSERT_EQ(ioctl(listener, SECCOMP_IOCTL_NOTIF_RECV, &req), 0);
+
+		ASSERT_EQ(req.data.nr,  __NR_getppid);
+
+		resp.id = req.id;
+		resp.error = 0;
+		resp.val = USER_NOTIF_MAGIC;
+		resp.flags = 0;
+		ASSERT_EQ(ioctl(listener, SECCOMP_IOCTL_NOTIF_SEND, &resp), 0);
+
+		clock_gettime(CLOCK_MONOTONIC, &ts);
+		end = ts.tv_nsec + ts.tv_sec * NSECS_PER_SEC;
+	}
+	TH_LOG("%s:\t%lld nsec/syscall", test_name, USER_NOTIF_BENCH_TIMEOUT / nr);
+	return nr;
+}
+
+TEST(user_notification_sync)
+{
+	pid_t pid;
+	long ret;
+	int status, listener;
+	unsigned long calls, sync_calls;
+
+	ret = prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0);
+	ASSERT_EQ(0, ret) {
+		TH_LOG("Kernel does not support PR_SET_NO_NEW_PRIVS!");
+	}
+
+	listener = user_notif_syscall(__NR_getppid,
+				      SECCOMP_FILTER_FLAG_NEW_LISTENER);
+	ASSERT_GE(listener, 0);
+
+	pid = fork();
+	ASSERT_GE(pid, 0);
+
+	if (pid == 0) {
+		while (1) {
+			ret = syscall(__NR_getppid);
+			if (ret == USER_NOTIF_MAGIC)
+				continue;
+			break;
+		}
+		_exit(1);
+	}
+
+	calls = user_notification_sync_loop(_metadata, "basic", listener);
+
+	/* Try to set invalid flags. */
+	EXPECT_SYSCALL_RETURN(-EINVAL,
+		ioctl(listener, SECCOMP_IOCTL_NOTIF_SET_FLAGS, 0xffffffff, 0));
+
+	ASSERT_EQ(ioctl(listener, SECCOMP_IOCTL_NOTIF_SET_FLAGS,
+			SECCOMP_USER_NOTIF_FD_SYNC_WAKE_UP, 0), 0);
+
+	sync_calls = user_notification_sync_loop(_metadata, "sync", listener);
+
+	EXPECT_GT(sync_calls, calls);
+
+	kill(pid, SIGKILL);
+	ASSERT_EQ(waitpid(pid, &status, 0), pid);
+	ASSERT_EQ(true, WIFSIGNALED(status));
+	ASSERT_EQ(SIGKILL, WTERMSIG(status));
+}
+
+
 /* Make sure PTRACE_O_SUSPEND_SECCOMP requires CAP_SYS_ADMIN. */
 FIXTURE(O_SUSPEND_SECCOMP) {
 	pid_t pid;
