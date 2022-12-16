@@ -6405,6 +6405,11 @@ wake_affine_idle(int this_cpu, int prev_cpu, int sync)
 	if (available_idle_cpu(prev_cpu))
 		return prev_cpu;
 
+	/* The only running task is a short duration one. */
+	if (cpu_rq(this_cpu)->nr_running == 1 &&
+	    is_short_task(cpu_curr(this_cpu)))
+		return this_cpu;
+
 	return nr_cpumask_bits;
 }
 
@@ -6961,6 +6966,10 @@ static int select_idle_sibling(struct task_struct *p, int prev, int target)
 				return i;
 		}
 	}
+
+	if (!has_idle_core && cpu_rq(target)->nr_running == 1 &&
+	    is_short_task(cpu_curr(target)) && is_short_task(p))
+		return target;
 
 	i = select_idle_cpu(p, sd, has_idle_core, target);
 	if ((unsigned)i < nr_cpumask_bits)
