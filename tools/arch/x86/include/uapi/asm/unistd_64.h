@@ -14,3 +14,6 @@
 #ifndef __NR_setns
 #define __NR_setns 308
 #endif
+#ifndef __NR_seccomp
+#define __NR_seccomp 317
+#endif
