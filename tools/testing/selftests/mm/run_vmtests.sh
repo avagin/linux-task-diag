@@ -56,6 +56,8 @@ separated by spaces:
 	memory protection key tests
 - soft_dirty
 	test soft dirty page bit semantics
+- pagemap
+	test pagemap_scan IOCTL
 - cow
 	test copy-on-write semantics
 example: ./run_vmtests.sh -t "hmm mmap ksm"
@@ -323,6 +325,8 @@ then
 fi
 
 CATEGORY="soft_dirty" run_test ./soft-dirty
+
+CATEGORY="pagemap" run_test ./pagemap_ioctl
 
 # COW tests
 CATEGORY="cow" run_test ./cow
