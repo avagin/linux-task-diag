@@ -1503,6 +1503,10 @@ struct kvm_arch {
 	 */
 #define SPLIT_DESC_CACHE_MIN_NR_OBJECTS (SPTE_ENT_PER_PAGE + 1)
 	struct kvm_mmu_memory_cache split_desc_cache;
+
+#ifdef CONFIG_KVM_EXTERNAL_WRITE_TRACKING
+	bool page_write_tracking_disabled;
+#endif
 };
 
 struct kvm_vm_stat {

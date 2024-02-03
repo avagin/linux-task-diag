@@ -4668,6 +4668,7 @@ int kvm_vm_ioctl_check_extension(struct kvm *kvm, long ext)
 	case KVM_CAP_VM_DISABLE_NX_HUGE_PAGES:
 	case KVM_CAP_IRQFD_RESAMPLE:
 	case KVM_CAP_MEMORY_FAULT_INFO:
+	case KVM_CAP_PAGE_WRITE_TRACKING:
 		r = 1;
 		break;
 	case KVM_CAP_EXIT_HYPERCALL:
@@ -6675,6 +6676,30 @@ split_irqchip_unlock:
 		}
 		mutex_unlock(&kvm->lock);
 		break;
+	case KVM_CAP_PAGE_WRITE_TRACKING: {
+		bool enabling = cap->args[0];
+
+		r = -EINVAL;
+		if (cap->args[0] & ~1)
+			break;
+
+		r = -EBUSY;
+		if (!enabling && (!tdp_enabled || kvm_shadow_root_allocated(kvm)))
+			break;
+#ifdef CONFIG_KVM_EXTERNAL_WRITE_TRACKING
+		write_lock(&kvm->mmu_lock);
+		if (!kvm_memslots_empty(kvm_memslots(kvm)) ||
+		    kvm_page_track_has_external_user(kvm)) {
+			write_unlock(&kvm->mmu_lock);
+			r = -EINVAL;
+			break;
+		}
+		kvm->arch.page_write_tracking_disabled = !enabling;
+		write_unlock(&kvm->mmu_lock);
+#endif
+		r = 0;
+		break;
+	}
 	default:
 		r = -EINVAL;
 		break;
