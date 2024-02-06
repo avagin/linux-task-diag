@@ -20,15 +20,9 @@
 #include "mmu_internal.h"
 #include "page_track.h"
 
-#ifdef CONFIG_KVM_EXTERNAL_WRITE_TRACKING
-#define KVM_EXTERNAL_WRITE_TRACKING_ENABLED(kvm) \
-		(!kvm->arch.page_write_tracking_disabled)
-#else
-#define KVM_EXTERNAL_WRITE_TRACKING_ENABLED(kvm) false
-#endif
-
 bool kvm_page_track_write_tracking_enabled(struct kvm *kvm)
-{	return KVM_EXTERNAL_WRITE_TRACKING_ENABLED(kvm) ||
+{
+	return IS_ENABLED(CONFIG_KVM_EXTERNAL_WRITE_TRACKING) ||
 	       !tdp_enabled || kvm_shadow_root_allocated(kvm);
 }
 
@@ -170,9 +164,6 @@ int kvm_page_track_register_notifier(struct kvm *kvm,
 
 	if (!kvm || kvm->mm != current->mm)
 		return -ESRCH;
-
-	if (kvm->arch.page_write_tracking_disabled)
-		return -EINVAL;
 
 	kvm_get_kvm(kvm);
 

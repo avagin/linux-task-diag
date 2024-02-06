@@ -8791,22 +8791,6 @@ means the VM type with value @n is supported.  Possible values of @n are::
   #define KVM_X86_DEFAULT_VM	0
   #define KVM_X86_SW_PROTECTED_VM	1
 
-8.38 KVM_CAP_PAGE_WRITE_TRACKING
--------------------------------------
-
-:Capability: KVM_CAP_PAGE_WRITE_TRACKING
-:Architectures: x86
-:Type: system ioctl
-:Parameters: args[0] defines whether the feature should be enabled or not
-:Returns: 0 on success, -EINVAL if args[0] isn't 1 or 0, -EINVAL if any memslot
-          was already created or any users was registered, -EBUSY if write
-          tracking is used for internal needs and can't be disabled.
-
-This capability enables/disables the page write-track mechanism. It is enabled
-by default for backward compatibility.
-
-This capability may only be set before any mem slots are created.
-
 9. Known KVM API problems
 =========================
 
