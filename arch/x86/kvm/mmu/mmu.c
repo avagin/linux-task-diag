@@ -3755,27 +3755,27 @@ static int mmu_first_shadow_root_alloc(struct kvm *kvm)
 	 * Check if anything actually needs to be allocated, e.g. all metadata
 	 * will be allocated upfront if TDP is disabled.
 	 */
-	if (kvm_memslots_have_rmaps(kvm) &&
-	    kvm_page_track_write_tracking_enabled(kvm))
+	r = kvm_page_track_write_tracking_enable(kvm);
+	if (r)
+		goto out_unlock;
+
+	if (kvm_memslots_have_rmaps(kvm))
 		goto out_success;
 
 	for (i = 0; i < kvm_arch_nr_memslot_as_ids(kvm); i++) {
 		slots = __kvm_memslots(kvm, i);
 		kvm_for_each_memslot(slot, bkt, slots) {
 			/*
-			 * Both of these functions are no-ops if the target is
-			 * already allocated, so unconditionally calling both
-			 * is safe.  Intentionally do NOT free allocations on
-			 * failure to avoid having to track which allocations
-			 * were made now versus when the memslot was created.
-			 * The metadata is guaranteed to be freed when the slot
-			 * is freed, and will be kept/used if userspace retries
+			 * This function is no-ops if the target is already
+			 * allocated, so unconditionally calling it is safe.
+			 * Intentionally do NOT free allocations on failure to
+			 * avoid having to track which allocations were made
+			 * now versus when the memslot was created.  The
+			 * metadata is guaranteed to be freed when the slot is
+			 * freed, and will be kept/used if userspace retries
 			 * KVM_RUN instead of killing the VM.
 			 */
 			r = memslot_rmap_alloc(slot, slot->npages);
-			if (r)
-				goto out_unlock;
-			r = kvm_page_track_write_tracking_alloc(slot);
 			if (r)
 				goto out_unlock;
 		}

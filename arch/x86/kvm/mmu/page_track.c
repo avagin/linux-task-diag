@@ -20,10 +20,14 @@
 #include "mmu_internal.h"
 #include "page_track.h"
 
-bool kvm_page_track_write_tracking_enabled(struct kvm *kvm)
+static bool kvm_page_track_write_tracking_enabled(struct kvm *kvm)
 {
-	return IS_ENABLED(CONFIG_KVM_EXTERNAL_WRITE_TRACKING) ||
-	       !tdp_enabled || kvm_shadow_root_allocated(kvm);
+	/*
+	 * Read page_write_tracking_enabled before related pointers. Pairs with
+	 * smp_store_release in kvm_page_track_write_tracking_enable.
+	 */
+	return smp_load_acquire(&kvm->arch.page_write_tracking_enabled) |
+	       !tdp_enabled;
 }
 
 void kvm_page_track_free_memslot(struct kvm_memory_slot *slot)
@@ -32,8 +36,8 @@ void kvm_page_track_free_memslot(struct kvm_memory_slot *slot)
 	slot->arch.gfn_write_track = NULL;
 }
 
-static int __kvm_page_track_write_tracking_alloc(struct kvm_memory_slot *slot,
-						 unsigned long npages)
+static int __kvm_write_tracking_alloc(struct kvm_memory_slot *slot,
+				      unsigned long npages)
 {
 	const size_t size = sizeof(*slot->arch.gfn_write_track);
 
@@ -51,12 +55,7 @@ int kvm_page_track_create_memslot(struct kvm *kvm,
 	if (!kvm_page_track_write_tracking_enabled(kvm))
 		return 0;
 
-	return __kvm_page_track_write_tracking_alloc(slot, npages);
-}
-
-int kvm_page_track_write_tracking_alloc(struct kvm_memory_slot *slot)
-{
-	return __kvm_page_track_write_tracking_alloc(slot, slot->npages);
+	return __kvm_write_tracking_alloc(slot, npages);
 }
 
 static void update_gfn_write_track(struct kvm_memory_slot *slot, gfn_t gfn,
@@ -154,6 +153,50 @@ int kvm_page_track_init(struct kvm *kvm)
 }
 
 /*
+ * kvm_page_track_write_tracking_enable enables the write tracking mechanism.
+ * If it has been already enabled, this function is no-op.
+ *
+ * The caller must hold kvm->slots_arch_lock.
+ */
+int kvm_page_track_write_tracking_enable(struct kvm *kvm)
+{
+	struct kvm_memslots *slots;
+	struct kvm_memory_slot *slot;
+	int r = 0, i, bkt;
+
+	lockdep_assert_held(&kvm->slots_arch_lock);
+
+	if (kvm_page_track_write_tracking_enabled(kvm))
+		return 0;
+
+	for (i = 0; i < kvm_arch_nr_memslot_as_ids(kvm); i++) {
+		slots = __kvm_memslots(kvm, i);
+		kvm_for_each_memslot(slot, bkt, slots) {
+			/*
+			 * This function is no-ops if the target is already
+			 * allocated, so unconditionally calling it is safe.
+			 * Intentionally do NOT free allocations on failure to
+			 * avoid having to track which allocations were made
+			 * now versus when the memslot was created.  The
+			 * metadata is guaranteed to be freed when the slot is
+			 * freed, and will be kept/used if userspace retries
+			 * KVM_RUN instead of killing the VM.
+			 */
+			r = __kvm_write_tracking_alloc(slot, slot->npages);
+			if (r)
+				goto err;
+		}
+	}
+	/*
+	 * Ensure that page_write_tracking_enabled becomes true strictly after
+	 * all the related pointers are set.
+	 */
+	smp_store_release(&kvm->arch.page_write_tracking_enabled, true);
+err:
+	return r;
+}
+
+/*
  * register the notifier so that event interception for the tracked guest
  * pages can be received.
  */
@@ -161,11 +204,20 @@ int kvm_page_track_register_notifier(struct kvm *kvm,
 				     struct kvm_page_track_notifier_node *n)
 {
 	struct kvm_page_track_notifier_head *head;
+	int r;
 
 	if (!kvm || kvm->mm != current->mm)
 		return -ESRCH;
 
 	kvm_get_kvm(kvm);
+
+	mutex_lock(&kvm->slots_arch_lock);
+	r = kvm_page_track_write_tracking_enable(kvm);
+	mutex_unlock(&kvm->slots_arch_lock);
+	if (r) {
+		kvm_put_kvm(kvm);
+		return r;
+	}
 
 	head = &kvm->arch.track_notifier_head;
 
