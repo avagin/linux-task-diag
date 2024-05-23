@@ -1,0 +1,33 @@
+From fb69782e321e9c674e09526d9e1f6e21adb6b94c Mon Sep 17 00:00:00 2001
+From: Andrei Vagin <avagin@google.com>
+Date: Tue, 14 May 2024 01:07:17 +0000
+Subject: [PATCH 0/4 v3] seccomp: improve handling of SECCOMP_IOCTL_NOTIF_RECV
+
+This patch set addresses two problems with the SECCOMP_IOCTL_NOTIF_RECV
+ioctl:
+* it doesn't return when the seccomp filter becomes unused (all tasks
+  have exited).
+* EPOLLHUP is triggered not when a task exits, but rather when its zombie
+  is collected.
+
+v2: - Remove unnecessary checks of PF_EXITING.
+    - Take siglock with disabling irqs.
+    Thanks to Oleg for the review and the help with the first version.
+v3: - a few fixes suggested by Kees.
+    - add a test to ensure that a dead thread leader doesn't prevent
+      installing new filters with SECCOMP_FILTER_FLAG_TSYNC.
+
+Andrei Vagin (3):
+  seccomp: interrupt SECCOMP_IOCTL_NOTIF_RECV when all users have exited
+  seccomp: release task filters when the task exits
+  selftests/seccomp: add test for NOTIF_RECV and unused filters
+  selftests/seccomp: check that a zombie leader doesn't affect others
+
+ kernel/exit.c                                 |   3 +-
+ kernel/seccomp.c                              |  30 +++-
+ tools/testing/selftests/seccomp/seccomp_bpf.c | 131 ++++++++++++++++++
+ 3 files changed, 157 insertions(+), 7 deletions(-)
+
+-- 
+2.45.0.rc1.225.g2a3ae87e7f-goog
+
