@@ -62,6 +62,7 @@ typedef unsigned long sigset_t;
 #define SIGRTMAX	_NSIG
 
 #define SA_RESTORER	0x04000000
+#define SA_NOFPU	0x08000000
 
 #define MINSIGSTKSZ	2048
 #define SIGSTKSZ	8192

@@ -92,7 +92,9 @@ static bool restore_sigcontext(struct pt_regs *regs,
 	if (unlikely(!(uc_flags & UC_STRICT_RESTORE_SS) && user_64bit_mode(regs)))
 		force_valid_ss(regs);
 
-	return fpu__restore_sig((void __user *)sc.fpstate, 0);
+	if (sc.fpstate)
+		return fpu__restore_sig((void __user *)sc.fpstate, 0);
+	return true;
 }
 
 static __always_inline int

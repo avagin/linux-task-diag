@@ -129,8 +129,12 @@ get_sigframe(struct ksignal *ksig, struct pt_regs *regs, size_t frame_size,
 		entering_altstack = true;
 	}
 
-	sp = fpu__alloc_mathframe(sp, ia32_frame, &buf_fx, &math_size);
-	*fpstate = (void __user *)sp;
+	if (!(ksig->ka.sa.sa_flags & SA_NOFPU)) {
+		sp = fpu__alloc_mathframe(sp, ia32_frame, &buf_fx, &math_size);
+		*fpstate = (void __user *)sp;
+	} else {
+		*fpstate = 0;
+	}
 
 	sp -= frame_size;
 
@@ -157,16 +161,18 @@ get_sigframe(struct ksignal *ksig, struct pt_regs *regs, size_t frame_size,
 		return (void __user *)-1L;
 	}
 
-	/* Update PKRU to enable access to the alternate signal stack. */
-	pkru = sig_prepare_pkru();
-	/* save i387 and extended state */
-	if (!copy_fpstate_to_sigframe(*fpstate, (void __user *)buf_fx, math_size, pkru)) {
-		/*
-		 * Restore PKRU to the original, user-defined value; disable
-		 * extra pkeys enabled for the alternate signal stack, if any.
-		 */
-		write_pkru(pkru);
-		return (void __user *)-1L;
+	if (!(ksig->ka.sa.sa_flags & SA_NOFPU)) {
+		/* Update PKRU to enable access to the alternate signal stack. */
+		pkru = sig_prepare_pkru();
+		/* save i387 and extended state */
+		if (!copy_fpstate_to_sigframe(*fpstate, (void __user *)buf_fx, math_size, pkru)) {
+			/*
+			 * Restore PKRU to the original, user-defined value; disable
+			 * extra pkeys enabled for the alternate signal stack, if any.
+			 */
+			write_pkru(pkru);
+			return (void __user *)-1L;
+		}
 	}
 
 	return (void __user *)sp;
@@ -307,7 +313,8 @@ handle_signal(struct ksignal *ksig, struct pt_regs *regs)
 		/*
 		 * Ensure the signal handler starts with the new fpu state.
 		 */
-		fpu__clear_user_states(fpu);
+		if (!(ksig->ka.sa.sa_flags & SA_NOFPU))
+			fpu__clear_user_states(fpu);
 	}
 	signal_setup_done(failed, ksig, stepping);
 }

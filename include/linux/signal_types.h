@@ -75,7 +75,7 @@ struct ksignal {
 
 #ifndef __ARCH_UAPI_SA_FLAGS
 #ifdef SA_RESTORER
-#define __ARCH_UAPI_SA_FLAGS	SA_RESTORER
+#define __ARCH_UAPI_SA_FLAGS	SA_RESTORER|SA_NOFPU
 #else
 #define __ARCH_UAPI_SA_FLAGS	0
 #endif
