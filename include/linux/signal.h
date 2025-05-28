@@ -264,6 +264,7 @@ static inline void init_sigpending(struct sigpending *sig)
 {
 	sigemptyset(&sig->signal);
 	INIT_LIST_HEAD(&sig->list);
+	sig->force_sig = NULL;
 }
 
 extern void flush_sigqueue(struct sigpending *queue);

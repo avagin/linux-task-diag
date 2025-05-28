@@ -549,6 +549,27 @@ bool unhandled_signal(struct task_struct *tsk, int sig)
 	return !tsk->ptrace;
 }
 
+static int collect_forced_signal(struct sigpending *list, kernel_siginfo_t *info)
+{
+	struct sigqueue *q = list->force_sig;
+	int sig;
+
+	if (!q)
+		return 0;
+
+	sig = q->info.si_signo;
+	if (!sig)
+		return 0;
+	copy_siginfo(info, &q->info);
+	sigdelset(&list->signal, sig);
+	//__sigqueue_free(q);
+	//list->force_sig = NULL;
+	q->info.si_signo = 0;
+	clear_thread_flag(TIF_SIGPENDING);
+
+	return sig;
+}
+
 static void collect_signal(int sig, struct sigpending *list, kernel_siginfo_t *info,
 			   struct sigqueue **timer_sigq)
 {
@@ -1036,6 +1057,25 @@ static void complete_signal(int sig, struct task_struct *p, enum pid_type type)
 static inline bool legacy_queue(struct sigpending *signals, int sig)
 {
 	return (sig < SIGRTMIN) && sigismember(&signals->signal, sig);
+}
+
+int force_sig_to_current(struct kernel_siginfo *info)
+{
+	int sig = info->si_signo;
+	struct sigqueue *q;
+	struct sigpending *pending = &current->pending;
+
+	if (pending->force_sig)
+		q = pending->force_sig;
+	else
+		q = sigqueue_alloc(sig, current, GFP_ATOMIC, true);
+	copy_siginfo(&q->info, info);
+	q->info.si_signo = sig;
+	sigaddset(&pending->signal, sig);
+	pending->force_sig = q;
+	signal_wake_up(current, 0);
+
+	return 0;
 }
 
 static int __send_signal_locked(int sig, struct kernel_siginfo *info,
@@ -2820,9 +2860,16 @@ bool get_signal(struct ksignal *ksig)
 	 */
 	try_to_freeze();
 
+	signr = collect_forced_signal(&current->pending, &ksig->info);
+	if (signr) {
+		struct k_sigaction *ka;
+
+		ka = &sighand->action[signr-1];
+		ksig->ka = *ka;
+		return true;
+	}
 relock:
 	spin_lock_irq(&sighand->siglock);
-
 	/*
 	 * Every stopped thread goes here after wakeup. Check to see if
 	 * we should notify the parent, prepare_signal(SIGCONT) encodes

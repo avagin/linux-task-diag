@@ -32,6 +32,7 @@ struct sigqueue {
 struct sigpending {
 	struct list_head list;
 	sigset_t signal;
+	struct sigqueue *force_sig;
 };
 
 struct sigaction {

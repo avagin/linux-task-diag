@@ -17,6 +17,7 @@
 
 #include "common.h"
 
+extern int force_sig_to_current(struct kernel_siginfo *info);
 static void trigger_sigsys(struct pt_regs *regs)
 {
 	struct kernel_siginfo info;
@@ -29,7 +30,8 @@ static void trigger_sigsys(struct pt_regs *regs)
 	info.si_arch = syscall_get_arch(current);
 	info.si_syscall = syscall_get_nr(current, regs);
 
-	force_sig_info(&info);
+	force_sig_to_current(&info);
+	//force_sig_info(&info);
 }
 
 bool syscall_user_dispatch(struct pt_regs *regs)
