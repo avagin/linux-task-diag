@@ -1477,8 +1477,7 @@ vma_needs_copy(struct vm_area_struct *dst_vma, struct vm_area_struct *src_vma)
 	if (src_vma->anon_vma)
 		return true;
 
-	/* Guard regions have momdified page tables that require copying. */
-	if (src_vma->vm_flags & VM_MAYBE_GUARD)
+	if (src_vma->vm_flags & VM_COPY_ON_FORK)
 		return true;
 
 	/*
