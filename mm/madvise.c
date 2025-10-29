@@ -1141,15 +1141,22 @@ static long madvise_guard_install(struct madvise_behavior *madv_behavior)
 		return -EINVAL;
 
 	/*
-	 * If we install guard markers, then the range is no longer
-	 * empty from a page table perspective and therefore it's
-	 * appropriate to have an anon_vma.
-	 *
-	 * This ensures that on fork, we copy page tables correctly.
+	 * It would be confusing for anonymous mappings to have page table
+	 * entries but no anon_vma established, so ensure that it is.
 	 */
-	err = anon_vma_prepare(vma);
-	if (err)
-		return err;
+	if (vma_is_anonymous(vma))
+		anon_vma_prepare(vma);
+
+	/*
+	 * Indicate that the VMA may contain guard regions, making it visible to
+	 * the user that a VMA may contain these, narrowing down the range which
+	 * must be scanned in order to detect them.
+	 *
+	 * This additionally causes page tables to be copied on fork regardless
+	 * of whether the VMA is anonymous or not, correctly preserving the
+	 * guard region page table entries.
+	 */
+	vm_flags_set(vma, VM_MAYBE_GUARD);
 
 	/*
 	 * Optimistically try to install the guard marker pages first. If any
@@ -1709,7 +1716,6 @@ static enum madvise_lock_mode get_lock_mode(struct madvise_behavior *madv_behavi
 	case MADV_POPULATE_READ:
 	case MADV_POPULATE_WRITE:
 	case MADV_COLLAPSE:
-	case MADV_GUARD_INSTALL:
 	case MADV_GUARD_REMOVE:
 		return MADVISE_MMAP_READ_LOCK;
 	case MADV_DONTNEED:

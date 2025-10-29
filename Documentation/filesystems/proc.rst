@@ -591,6 +591,7 @@ encoded manner. The codes are the following:
     sl    sealed
     lf    lock on fault pages
     dp    always lazily freeable mapping
+    gu    maybe contains guard regions (if not set, definitely doesn't)
     ==    =======================================
 
 Note that there is no guarantee that every flag and associated mnemonic will
