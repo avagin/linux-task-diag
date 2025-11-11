@@ -144,8 +144,10 @@ static inline struct mnt_namespace *node_to_mnt_ns(const struct rb_node *node)
 
 static void mnt_ns_release(struct mnt_namespace *ns)
 {
+	if (IS_ERR_OR_NULL(ns))
+		return;
 	/* keep alive for {list,stat}mount() */
-	if (ns && refcount_dec_and_test(&ns->passive)) {
+	if (refcount_dec_and_test(&ns->passive)) {
 		fsnotify_mntns_delete(ns);
 		put_user_ns(ns->user_ns);
 		kfree(ns);
@@ -5756,8 +5758,10 @@ static struct mnt_namespace *grab_requested_mnt_ns(const struct mnt_id_req *kreq
 	if (kreq->mnt_ns_id && kreq->spare)
 		return ERR_PTR(-EINVAL);
 
-	if (kreq->mnt_ns_id)
-		return lookup_mnt_ns(kreq->mnt_ns_id);
+	if (kreq->mnt_ns_id) {
+		mnt_ns = lookup_mnt_ns(kreq->mnt_ns_id);
+		return mnt_ns ? : ERR_PTR(-ENOENT);
+	}
 
 	if (kreq->spare) {
 		struct ns_common *ns;
@@ -5801,8 +5805,8 @@ SYSCALL_DEFINE4(statmount, const struct mnt_id_req __user *, req,
 		return ret;
 
 	ns = grab_requested_mnt_ns(&kreq);
-	if (!ns)
-		return -ENOENT;
+	if (IS_ERR(ns))
+		return PTR_ERR(ns);
 
 	if (kreq.mnt_ns_id && (ns != current->nsproxy->mnt_ns) &&
 	    !ns_capable_noaudit(ns->user_ns, CAP_SYS_ADMIN))
@@ -5912,8 +5916,8 @@ static void __free_klistmount_free(const struct klistmount *kls)
 static inline int prepare_klistmount(struct klistmount *kls, struct mnt_id_req *kreq,
 				     size_t nr_mnt_ids)
 {
-
 	u64 last_mnt_id = kreq->param;
+	struct mnt_namespace *ns;
 
 	/* The first valid unique mount id is MNT_UNIQUE_ID_OFFSET + 1. */
 	if (last_mnt_id != 0 && last_mnt_id <= MNT_UNIQUE_ID_OFFSET)
@@ -5927,9 +5931,10 @@ static inline int prepare_klistmount(struct klistmount *kls, struct mnt_id_req *
 	if (!kls->kmnt_ids)
 		return -ENOMEM;
 
-	kls->ns = grab_requested_mnt_ns(kreq);
-	if (!kls->ns)
-		return -ENOENT;
+	ns = grab_requested_mnt_ns(kreq);
+	if (IS_ERR(ns))
+		return PTR_ERR(ns);
+	kls->ns = ns;
 
 	kls->mnt_parent_id = kreq->mnt_id;
 	return 0;
