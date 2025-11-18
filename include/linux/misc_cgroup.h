@@ -8,6 +8,8 @@
 #ifndef _MISC_CGROUP_H_
 #define _MISC_CGROUP_H_
 
+#include <linux/elf.h>
+
 /**
  * enum misc_res_type - Types of misc cgroup entries supported by the host.
  */
@@ -24,6 +26,20 @@ enum misc_res_type {
 #endif
 	/** @MISC_CG_RES_TYPES: count of enum misc_res_type constants */
 	MISC_CG_RES_TYPES
+};
+
+enum misc_mask_type {
+	MISC_CG_MASK_HWCAP,
+#ifdef ELF_HWCAP2
+	MISC_CG_MASK_HWCAP2,
+#endif
+#ifdef ELF_HWCAP3
+	MISC_CG_MASK_HWCAP3,
+#endif
+#ifdef ELF_HWCAP4
+	MISC_CG_MASK_HWCAP4,
+#endif
+	MISC_CG_MASK_TYPES
 };
 
 struct misc_cg;
@@ -62,11 +78,14 @@ struct misc_cg {
 	struct cgroup_file events_local_file;
 
 	struct misc_res res[MISC_CG_RES_TYPES];
+	u64 mask[MISC_CG_MASK_TYPES];
 };
 
 int misc_cg_set_capacity(enum misc_res_type type, u64 capacity);
 int misc_cg_try_charge(enum misc_res_type type, struct misc_cg *cg, u64 amount);
 void misc_cg_uncharge(enum misc_res_type type, struct misc_cg *cg, u64 amount);
+
+int misc_cg_get_mask(enum misc_mask_type type, struct misc_cg *cg, u64 *pmask);
 
 /**
  * css_misc() - Get misc cgroup from the css.
@@ -132,6 +151,12 @@ static inline struct misc_cg *get_current_misc_cg(void)
 
 static inline void put_misc_cg(struct misc_cg *cg)
 {
+}
+
+static inline int misc_cg_get_mask(enum misc_mask_type type, struct misc_cg *cg, u64 *pmask)
+{
+	*pmask = 0;
+	return 0;
 }
 
 #endif /* CONFIG_CGROUP_MISC */

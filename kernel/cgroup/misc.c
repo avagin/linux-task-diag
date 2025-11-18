@@ -30,6 +30,19 @@ static const char *const misc_res_name[] = {
 #endif
 };
 
+static const char *const misc_mask_name[] = {
+	"AT_HWCAP",
+#ifdef ELF_HWCAP2
+	"AT_HWCAP2",
+#endif
+#ifdef ELF_HWCAP3
+	"AT_HWCAP3",
+#endif
+#ifdef ELF_HWCAP4
+	"AT_HWCAP4",
+#endif
+};
+
 /* Root misc cgroup */
 static struct misc_cg root_cg;
 
@@ -69,6 +82,11 @@ static struct misc_cg *parent_misc(struct misc_cg *cgroup)
 static inline bool valid_type(enum misc_res_type type)
 {
 	return type >= 0 && type < MISC_CG_RES_TYPES;
+}
+
+static inline bool valid_mask_type(enum misc_mask_type type)
+{
+	return type >= 0 && type < MISC_CG_MASK_TYPES;
 }
 
 /**
@@ -391,6 +409,109 @@ static int misc_events_local_show(struct seq_file *sf, void *v)
 	return __misc_events_show(sf, true);
 }
 
+/**
+ * misc_cg_get_mask() - Get the mask of the specified type.
+ * @type: The misc mask type.
+ * @cg: The misc cgroup.
+ * @pmask: Pointer to the resulting mask.
+ *
+ * This function calculates the effective mask for a given cgroup by walking up
+ * the hierarchy and ORing the masks from all parent cgroupfs. The final result
+ * is stored in the location pointed to by @pmask.
+ *
+ * Context: Any context.
+ * Return: 0 on success, -EINVAL if @type is invalid.
+ */
+int misc_cg_get_mask(enum misc_mask_type type, struct misc_cg *cg, u64 *pmask)
+{
+	struct misc_cg *i;
+	u64 mask = 0;
+
+	if (!(valid_mask_type(type)))
+		return -EINVAL;
+
+	for (i = cg; i; i = parent_misc(i))
+		mask |= READ_ONCE(i->mask[type]);
+
+	*pmask = mask;
+	return 0;
+}
+
+/**
+ * misc_cg_mask_show() - Show the misc cgroup masks.
+ * @sf: Interface file
+ * @v: Arguments passed
+ *
+ * Context: Any context.
+ * Return: 0 to denote successful print.
+ */
+static int misc_cg_mask_show(struct seq_file *sf, void *v)
+{
+	struct misc_cg *cg = css_misc(seq_css(sf));
+	int i;
+
+	for (i = 0; i < MISC_CG_MASK_TYPES; i++) {
+		u64 rval, val = READ_ONCE(cg->mask[i]);
+
+		misc_cg_get_mask(i, cg, &rval);
+		seq_printf(sf, "%s\t%#016llx\t%#016llx\n", misc_mask_name[i], val, rval);
+	}
+
+	return 0;
+}
+
+/**
+ * misc_cg_mask_write() - Update the mask of the specified type.
+ * @of: Handler for the file.
+ * @buf: The buffer containing the user's input.
+ * @nbytes: The number of bytes in @buf.
+ * @off: The offset in the file.
+ *
+ * This function parses a user-provided string to update a mask.
+ * The expected format is "<mask_name> <value>", for example:
+ *
+ * echo "AT_HWCAP 0xf00" > misc.mask
+ *
+ * Context: Process context.
+ * Return: The number of bytes processed on success, or a negative error code
+ * on failure.
+ */
+static ssize_t misc_cg_mask_write(struct kernfs_open_file *of, char *buf,
+				 size_t nbytes, loff_t off)
+{
+	struct misc_cg *cg;
+	u64 max;
+	int ret = 0, i;
+	enum misc_mask_type type = MISC_CG_MASK_TYPES;
+	char *token;
+
+	buf = strstrip(buf);
+	token = strsep(&buf, " ");
+
+	if (!token || !buf)
+		return -EINVAL;
+
+	for (i = 0; i < MISC_CG_MASK_TYPES; i++) {
+		if (!strcmp(misc_mask_name[i], token)) {
+			type = i;
+			break;
+		}
+	}
+
+	if (type == MISC_CG_MASK_TYPES)
+		return -EINVAL;
+
+	ret = kstrtou64(buf, 0, &max);
+	if (ret)
+		return ret;
+
+	cg = css_misc(of_css(of));
+
+	WRITE_ONCE(cg->mask[type], max);
+
+	return nbytes;
+}
+
 /* Misc cgroup interface files */
 static struct cftype misc_cg_files[] = {
 	{
@@ -423,6 +544,11 @@ static struct cftype misc_cg_files[] = {
 		.flags = CFTYPE_NOT_ON_ROOT,
 		.file_offset = offsetof(struct misc_cg, events_local_file),
 		.seq_show = misc_events_local_show,
+	},
+	{
+		.name = "mask",
+		.write = misc_cg_mask_write,
+		.seq_show = misc_cg_mask_show,
 	},
 	{}
 };
