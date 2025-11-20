@@ -1,0 +1,45 @@
+Subject: [PATCH 0/3] cgroup/misc: Add hwcap masks to the misc controller
+
+This patch series introduces a mechanism to mask hardware capabilities
+(AT_HWCAP) reported to user-space processes via the misc cgroup
+controller.
+
+To support C/R operations (snapshots, live migration) in heterogeneous
+clusters, we must ensure that processes utilize CPU features available
+on all potential target nodes. To solve this, we need to advertise a
+common feature set across the cluster. This patchset allows users to
+configure a mask for AT_HWCAP, AT_HWCAP2. This ensures that applications
+within a container only detect and use features guaranteed to be
+available on all potential target hosts.
+
+The first patch adds the mask interface to the misc cgroup controller,
+allowing users to set masks for AT_HWCAP, AT_HWCAP2...
+
+The second patch adds a selftest to verify the functionality of the new
+interface, ensuring masks are applied and inherited correctly.
+
+The third patch updates the documentation.
+
+Cc: Kees Cook <kees@kernel.org>
+Cc: Tejun Heo <tj@kernel.org>
+Cc: Johannes Weiner <hannes@cmpxchg.org>
+Cc: "Michal Koutný" <mkoutny@suse.com>
+Cc: Vipin Sharma <vipinsh@google.com>
+Cc: Jonathan Corbet <corbet@lwn.net>
+
+Andrei Vagin (3):
+  cgroup, binfmt_elf: Add hwcap masks to the misc controller
+  selftests/cgroup: Add a test for the misc.mask cgroup interface
+  Documentation: cgroup-v2: Document misc.mask interface
+
+ Documentation/admin-guide/cgroup-v2.rst    |  25 ++++
+ Documentation/arch/arm64/elf_hwcaps.rst    |  21 ++++
+ fs/binfmt_elf.c                            |  24 +++-
+ include/linux/misc_cgroup.h                |  25 ++++
+ kernel/cgroup/misc.c                       | 126 +++++++++++++++++++++
+ tools/testing/selftests/cgroup/.gitignore  |   1 +
+ tools/testing/selftests/cgroup/Makefile    |   2 +
+ tools/testing/selftests/cgroup/config      |   1 +
+ tools/testing/selftests/cgroup/test_misc.c | 114 +++++++++++++++++++
+ 9 files changed, 335 insertions(+), 4 deletions(-)
+ create mode 100644 tools/testing/selftests/cgroup/test_misc.c
