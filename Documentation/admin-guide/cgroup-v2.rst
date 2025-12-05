@@ -2924,6 +2924,31 @@ Miscellaneous controller provides 3 interface files. If two misc resources (res_
         cgroup i.e. not hierarchical. The file modified event generated on
         this file reflects only the local events.
 
+Miscellaneous controller provides one interface file to control masks.
+
+  misc.mask
+	A read-write flat-keyed file shown in all cgroups. It allows
+	setting/reading the masks.  The file format is a series of lines, each
+	describing a mask of a specific mask type.
+
+	The file has the following format for each line::
+
+	  $NAME\t$LOCAL_MASK\t$EFFECTIVE_MASK
+
+	Where $NAME is the mask type name, $LOCAL_MASK is the mask for the
+	current cgroup, and $EFFECTIVE_MASK is the effective mask for the
+	current cgroup, which is a combination of the masks from the current
+	cgroup and all its ancestors.
+
+	To set a mask, write a string in the following format to the file::
+
+	  $NAME $MASK
+
+	For example, to set a mask for the mask_a type, you would write the
+	following to the file::
+
+	  # echo "mask_a 0x3000" > misc.mask
+
 Migration and Ownership
 ~~~~~~~~~~~~~~~~~~~~~~~
 

@@ -450,3 +450,24 @@ HWCAP3_LSFE
 
 For interoperation with userspace, the kernel guarantees that bits 62
 and 63 of AT_HWCAP will always be returned as 0.
+
+5. Masking hwcaps for a group of processes
+--------------------------------
+
+The misc cgroup controller provides a mechanism to mask hwcaps for a specific
+workload. This can be useful for limiting the features available to a
+containerized application.
+
+To mask hwcaps, you can write a mask to the ``misc.mask`` file in the cgroup
+directory. The mask is specified per AT_HWCAP entry (AT_HWCAP, AT_HWCAP2,
+AT_HWCAP3) in the format ``<HWCAP_ENTRY_NAME> <BITMASK>``.
+
+For example, to mask ``HWCAP_FP`` and ``HWCAP_ASIMD`` (which are represented by
+bits 0 and 1 of AT_HWCAP, so a mask of 0x3) for a workload, you would write the
+mask for AT_HWCAP to the ``misc.mask`` file in the new cgroup directory::
+
+    # echo "AT_HWCAP 0x3" > /sys/fs/cgroup/misc/my-workload/misc.mask
+
+Any new processes started in this cgroup will have the specified hwcaps
+masked. You can verify this by reading the ``misc.mask`` file, which will
+show the effective mask for the cgroup.
