@@ -2157,8 +2157,10 @@ static int prctl_set_mm_map(int opt, const void __user *addr, unsigned long data
 	 * not introduce additional locks here making the kernel
 	 * more complex.
 	 */
-	if (prctl_map.auxv_size)
+	if (prctl_map.auxv_size) {
 		memcpy(mm->saved_auxv, user_auxv, sizeof(user_auxv));
+		mm_flags_set(MMF_USER_HWCAP, current->mm);
+	}
 
 	mmap_read_unlock(mm);
 	return 0;
@@ -2191,6 +2193,7 @@ static int prctl_set_auxv(struct mm_struct *mm, unsigned long addr,
 	task_lock(current);
 	memcpy(mm->saved_auxv, user_auxv, len);
 	task_unlock(current);
+	mm_flags_set(MMF_USER_HWCAP, current->mm);
 
 	return 0;
 }
