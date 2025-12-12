@@ -1775,6 +1775,65 @@ out:
 	return retval;
 }
 
+static void inherit_hwcap(struct linux_binprm *bprm)
+{
+	struct mm_struct *mm = current->mm;
+	bool compat = in_compat_syscall();
+	int i, n;
+
+#ifdef ELF_HWCAP4
+	n = 4;
+#elif defined(ELF_HWCAP3)
+	n = 3;
+#elif defined(ELF_HWCAP2)
+	n = 2;
+#else
+	n = 1;
+#endif
+
+	for (i = 0; n && i < AT_VECTOR_SIZE; i += 2) {
+		unsigned long type, val;
+
+		if (!compat) {
+			type = mm->saved_auxv[i];
+			val = mm->saved_auxv[i + 1];
+		} else {
+			compat_uptr_t *auxv = (compat_uptr_t *)mm->saved_auxv;
+
+			type = auxv[i];
+			val = auxv[i + 1];
+		}
+
+		switch (type) {
+		case AT_NULL:
+			goto done;
+		case AT_HWCAP:
+			bprm->hwcap = val;
+			break;
+#ifdef ELF_HWCAP2
+		case AT_HWCAP2:
+			bprm->hwcap2 = val;
+			break;
+#endif
+#ifdef ELF_HWCAP3
+		case AT_HWCAP3:
+			bprm->hwcap3 = val;
+			break;
+#endif
+#ifdef ELF_HWCAP4
+		case AT_HWCAP4:
+			bprm->hwcap4 = val;
+			break;
+#endif
+		default:
+			continue;
+		}
+		n--;
+	}
+done:
+	mm_flags_set(MMF_USER_HWCAP, bprm->mm);
+}
+
 static int do_execveat_common(int fd, struct filename *filename,
 			      struct user_arg_ptr argv,
 			      struct user_arg_ptr envp,
@@ -1842,6 +1901,9 @@ static int do_execveat_common(int fd, struct filename *filename,
 		pr_warn_once("process '%s' launched '%s' with NULL argv: empty string added\n",
 			     current->comm, bprm->filename);
 	}
+
+	if (mm_flags_test(MMF_USER_HWCAP, current->mm))
+		inherit_hwcap(bprm);
 
 	return bprm_execve(bprm);
 }
