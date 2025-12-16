@@ -64,7 +64,7 @@
 #define DRBD_DISK_TIMEOUT_DEF 0U    /* disabled */
 #define DRBD_DISK_TIMEOUT_SCALE '1'
 
-  /* active connection retries when C_WF_CONNECTION */
+  /* active connection retries when C_CONNECTING */
 #define DRBD_CONNECT_INT_MIN 1U
 #define DRBD_CONNECT_INT_MAX 120U
 #define DRBD_CONNECT_INT_DEF 10U   /* seconds */
@@ -88,14 +88,13 @@
 #define DRBD_MAX_EPOCH_SIZE_DEF 2048U
 #define DRBD_MAX_EPOCH_SIZE_SCALE '1'
 
-  /* I don't think that a tcp send buffer of more than 10M is useful */
 #define DRBD_SNDBUF_SIZE_MIN  0U
-#define DRBD_SNDBUF_SIZE_MAX  (10U<<20)
+#define DRBD_SNDBUF_SIZE_MAX  (128U<<20)
 #define DRBD_SNDBUF_SIZE_DEF  0U
 #define DRBD_SNDBUF_SIZE_SCALE '1'
 
 #define DRBD_RCVBUF_SIZE_MIN  0U
-#define DRBD_RCVBUF_SIZE_MAX  (10U<<20)
+#define DRBD_RCVBUF_SIZE_MAX  (128U<<20)
 #define DRBD_RCVBUF_SIZE_DEF  0U
 #define DRBD_RCVBUF_SIZE_SCALE '1'
 
@@ -117,16 +116,19 @@
 #define DRBD_KO_COUNT_MAX  200U
 #define DRBD_KO_COUNT_DEF  7U
 #define DRBD_KO_COUNT_SCALE '1'
+
+#define DRBD_ALLOW_REMOTE_READ_DEF 1U
 /* } */
 
 /* syncer { */
   /* FIXME allow rate to be zero? */
 #define DRBD_RESYNC_RATE_MIN 1U
 /* channel bonding 10 GbE, or other hardware */
-#define DRBD_RESYNC_RATE_MAX (4 << 20)
+#define DRBD_RESYNC_RATE_MAX (8U << 20)
 #define DRBD_RESYNC_RATE_DEF 250U
 #define DRBD_RESYNC_RATE_SCALE 'k'  /* kilobytes */
 
+  /* less than 67 would hit performance unnecessarily. */
 #define DRBD_AL_EXTENTS_MIN  67U
   /* we use u16 as "slot number", (u16)~0 is "FREE".
    * If you use >= 292 kB on-disk ring buffer,
@@ -182,7 +184,7 @@
 #define DRBD_C_FILL_TARGET_DEF 100U /* Try to place 50KiB in socket send buffer during resync */
 #define DRBD_C_FILL_TARGET_SCALE 's'  /* sectors */
 
-#define DRBD_C_MAX_RATE_MIN     250U
+#define DRBD_C_MAX_RATE_MIN     0U
 #define DRBD_C_MAX_RATE_MAX     (4U << 20)
 #define DRBD_C_MAX_RATE_DEF     102400U
 #define DRBD_C_MAX_RATE_SCALE	'k'  /* kilobytes */
@@ -207,10 +209,11 @@
 #define DRBD_DISK_BARRIER_DEF	0U
 #define DRBD_DISK_FLUSHES_DEF	1U
 #define DRBD_DISK_DRAIN_DEF	1U
+#define DRBD_DISK_DISKLESS_DEF	0U
 #define DRBD_MD_FLUSHES_DEF	1U
 #define DRBD_TCP_CORK_DEF	1U
 #define DRBD_AL_UPDATES_DEF     1U
-
+#define DRBD_INVALIDATE_RESET_BITMAP_DEF 1U
 /* We used to ignore the discard_zeroes_data setting.
  * To not change established (and expected) behaviour,
  * by default assume that, for discard_zeroes_data=0,
@@ -227,6 +230,52 @@
 #define DRBD_ALWAYS_ASBP_DEF	0U
 #define DRBD_USE_RLE_DEF	1U
 #define DRBD_CSUMS_AFTER_CRASH_ONLY_DEF 0U
+#define DRBD_AUTO_PROMOTE_DEF	1U
+#define DRBD_BITMAP_DEF         1U
+#define DRBD_RESYNC_WITHOUT_REPLICATION_DEF 1U
+
+#define DRBD_NR_REQUESTS_MIN	4U
+#define DRBD_NR_REQUESTS_DEF	8000U
+#define DRBD_NR_REQUESTS_MAX	-1U
+#define DRBD_NR_REQUESTS_SCALE	'1'
+
+#define DRBD_MAX_BIO_SIZE_DEF	DRBD_MAX_BIO_SIZE
+#define DRBD_MAX_BIO_SIZE_MIN	(1U << 9)
+#define DRBD_MAX_BIO_SIZE_MAX	DRBD_MAX_BIO_SIZE
+#define DRBD_MAX_BIO_SIZE_SCALE '1'
+
+#define DRBD_NODE_ID_DEF		0U
+#define DRBD_NODE_ID_MIN		0U
+#ifndef DRBD_NODE_ID_MAX /* Is also defined in drbd.h */
+#define DRBD_NODE_ID_MAX		DRBD_PEERS_MAX
+#endif
+#define DRBD_NODE_ID_SCALE		'1'
+
+#define DRBD_PEER_ACK_WINDOW_DEF	4096U   /* 2 MiByte */
+#define DRBD_PEER_ACK_WINDOW_MIN	2048U   /* 1 MiByte */
+#define DRBD_PEER_ACK_WINDOW_MAX	204800U /* 100 MiByte */
+#define DRBD_PEER_ACK_WINDOW_SCALE 's' /* sectors*/
+
+#define DRBD_PEER_ACK_DELAY_DEF	100U    /* 100ms */
+#define DRBD_PEER_ACK_DELAY_MIN 1U
+#define DRBD_PEER_ACK_DELAY_MAX 10000U  /* 10 seconds */
+#define DRBD_PEER_ACK_DELAY_SCALE '1' /* milliseconds */
+
+/* Two-phase commit timeout (1/10 seconds). */
+#define DRBD_TWOPC_TIMEOUT_MIN	50U
+#define DRBD_TWOPC_TIMEOUT_MAX	600U
+#define DRBD_TWOPC_TIMEOUT_DEF	300U
+#define DRBD_TWOPC_TIMEOUT_SCALE '1'
+
+#define DRBD_TWOPC_RETRY_TIMEOUT_MIN 1U
+#define DRBD_TWOPC_RETRY_TIMEOUT_MAX 50U
+#define DRBD_TWOPC_RETRY_TIMEOUT_DEF 1U
+#define DRBD_TWOPC_RETRY_TIMEOUT_SCALE '1'
+
+#define DRBD_SYNC_FROM_NID_DEF -1
+#define DRBD_SYNC_FROM_NID_MIN -1
+#define DRBD_SYNC_FROM_NID_MAX DRBD_PEERS_MAX
+#define DRBD_SYNC_FROM_NID_SCALE '1'
 
 #define DRBD_AL_STRIPES_MIN     1U
 #define DRBD_AL_STRIPES_MAX     1024U
@@ -243,9 +292,51 @@
 #define DRBD_SOCKET_CHECK_TIMEO_DEF 0U
 #define DRBD_SOCKET_CHECK_TIMEO_SCALE '1'
 
+/* Auto promote timeout (1/10 seconds). */
+#define DRBD_AUTO_PROMOTE_TIMEOUT_MIN 0U
+#define DRBD_AUTO_PROMOTE_TIMEOUT_MAX 600U
+#define DRBD_AUTO_PROMOTE_TIMEOUT_DEF 20U
+#define DRBD_AUTO_PROMOTE_TIMEOUT_SCALE '1'
+
 #define DRBD_RS_DISCARD_GRANULARITY_MIN 0U
 #define DRBD_RS_DISCARD_GRANULARITY_MAX (1U<<20)  /* 1MiByte */
 #define DRBD_RS_DISCARD_GRANULARITY_DEF 0U     /* disabled by default */
 #define DRBD_RS_DISCARD_GRANULARITY_SCALE '1' /* bytes */
+
+#define DRBD_QUORUM_MIN 0U
+#define DRBD_QUORUM_MAX QOU_ALL /* Note: user visible min/max different */
+#define DRBD_QUORUM_DEF QOU_OFF /* kernel min/max includes symbolic values */
+#define DRBD_QUORUM_SCALE '1' /* nodes */
+
+#define DRBD_BLOCK_SIZE_MIN 512
+#define DRBD_BLOCK_SIZE_MAX 4096
+#define DRBD_BLOCK_SIZE_DEF 512
+#define DRBD_BLOCK_SIZE_SCALE '1' /* Bytes */
+
+/* By default freeze IO, if set error all IOs as quick as possible */
+#define DRBD_ON_NO_QUORUM_DEF ONQ_SUSPEND_IO
+
+#define DRBD_ON_SUSP_PRI_OUTD_DEF SPO_DISCONNECT
+#define DRBD_DRBD8_COMPAT_MODE_DEF 0U
+
+#define DRBD_TLS_DEF 0U /* disabled by default */
+#define DRBD_TLS_PRIVKEY_DEF 0 /* disabled by default */
+#define DRBD_TLS_CERTIFICATE_DEF 0 /* disabled by default */
+#define DRBD_TLS_KEYRING_DEF 0 /* disabled by default */
+
+#define DRBD_LOAD_BALANCE_PATHS_DEF 0U
+
+#define DRBD_RDMA_CTRL_RCVBUF_SIZE_MIN  0U
+#define DRBD_RDMA_CTRL_RCVBUF_SIZE_MAX  (10U<<20)
+#define DRBD_RDMA_CTRL_RCVBUF_SIZE_DEF 0
+#define DRBD_RDMA_CTRL_RCVBUF_SIZE_SCALE '1'
+
+#define DRBD_RDMA_CTRL_SNDBUF_SIZE_MIN  0U
+#define DRBD_RDMA_CTRL_SNDBUF_SIZE_MAX  (10U<<20)
+#define DRBD_RDMA_CTRL_SNDBUF_SIZE_DEF 0
+#define DRBD_RDMA_CTRL_SNDBUF_SIZE_SCALE '1'
+
+/* Enable bdev_freeze/lockfs by default */
+#define DRBD_SUSPEND_IO_BDEV_FREEZE_DEF 1U
 
 #endif
