@@ -10,4 +10,5 @@ drbd-$(CONFIG_DEBUG_FS) += drbd_debugfs.o
 obj-$(CONFIG_BLK_DEV_DRBD)     += drbd.o
 
 obj-$(CONFIG_BLK_DEV_DRBD_TCP) += drbd_transport_tcp.o
+obj-$(CONFIG_BLK_DEV_DRBD_LB_TCP) += drbd_transport_lb-tcp.o
 obj-$(CONFIG_BLK_DEV_DRBD_RDMA) += drbd_transport_rdma.o

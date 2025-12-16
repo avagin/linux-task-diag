@@ -85,6 +85,17 @@ config BLK_DEV_DRBD_TCP
 
 	  If unsure, say Y.
 
+config BLK_DEV_DRBD_LB_TCP
+	tristate "DRBD load-balanced TCP transport"
+	depends on BLK_DEV_DRBD
+	help
+
+	  Load-balanced TCP transport support for DRBD. This transport
+	  distributes DRBD replication traffic across multiple TCP
+	  connections for improved throughput.
+
+	  If unsure, say N.
+
 config BLK_DEV_DRBD_RDMA
 	tristate "DRBD RDMA transport"
 	depends on BLK_DEV_DRBD && INFINIBAND && INFINIBAND_ADDR_TRANS
