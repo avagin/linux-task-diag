@@ -92,9 +92,7 @@ source "drivers/dibs/Kconfig"
 source "net/xdp/Kconfig"
 
 config NET_HANDSHAKE
-	bool
-	depends on SUNRPC || NVME_TARGET_TCP || NVME_TCP
-	default y
+	def_bool SUNRPC || NVME_TARGET_TCP || NVME_TCP
 
 config NET_HANDSHAKE_KUNIT_TEST
 	tristate "KUnit tests for the handshake upcall mechanism" if !KUNIT_ALL_TESTS
