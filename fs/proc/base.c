@@ -1083,14 +1083,20 @@ static ssize_t auxv_read(struct file *file, char __user *buf,
 {
 	struct mm_struct *mm = file->private_data;
 	unsigned int nwords = 0;
+	unsigned long saved_auxv[AT_VECTOR_SIZE];
 
 	if (!mm)
 		return 0;
+
+	spin_lock(&mm->arg_lock);
+	memcpy(saved_auxv, mm->saved_auxv, sizeof(saved_auxv));
+	spin_unlock(&mm->arg_lock);
+
 	do {
 		nwords += 2;
-	} while (mm->saved_auxv[nwords - 2] != 0); /* AT_NULL */
-	return simple_read_from_buffer(buf, count, ppos, mm->saved_auxv,
-				       nwords * sizeof(mm->saved_auxv[0]));
+	} while (saved_auxv[nwords - 2] != 0); /* AT_NULL */
+	return simple_read_from_buffer(buf, count, ppos, saved_auxv,
+				       nwords * sizeof(saved_auxv[0]));
 }
 
 static const struct file_operations proc_auxv_operations = {
