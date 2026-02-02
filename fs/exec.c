@@ -1793,6 +1793,7 @@ out:
 
 static void inherit_hwcap(struct linux_binprm *bprm)
 {
+	struct mm_struct *mm = current->mm;
 	int i, n;
 
 #ifdef ELF_HWCAP4
@@ -1805,10 +1806,12 @@ static void inherit_hwcap(struct linux_binprm *bprm)
 	n = 1;
 #endif
 
+	spin_lock(&mm->arg_lock);
 	for (i = 0; n && i < AT_VECTOR_SIZE; i += 2) {
-		long val = current->mm->saved_auxv[i + 1];
+		unsigned long type = mm->saved_auxv[i];
+		unsigned long val = mm->saved_auxv[i + 1];
 
-		switch (current->mm->saved_auxv[i]) {
+		switch (type) {
 		case AT_NULL:
 			goto done;
 		case AT_HWCAP:
@@ -1835,6 +1838,7 @@ static void inherit_hwcap(struct linux_binprm *bprm)
 		n--;
 	}
 done:
+	spin_unlock(&mm->arg_lock);
 	mm_flags_set(MMF_USER_HWCAP, bprm->mm);
 }
 
