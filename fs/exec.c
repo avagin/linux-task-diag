@@ -1801,6 +1801,7 @@ static void inherit_hwcap(struct linux_binprm *bprm)
 	n = 1;
 #endif
 
+	spin_lock(&mm->arg_lock);
 	for (i = 0; n && i < AT_VECTOR_SIZE; i += 2) {
 		unsigned long type = mm->saved_auxv[i];
 		unsigned long val = mm->saved_auxv[i + 1];
@@ -1832,6 +1833,7 @@ static void inherit_hwcap(struct linux_binprm *bprm)
 		n--;
 	}
 done:
+	spin_unlock(&mm->arg_lock);
 	mm_flags_set(MMF_USER_HWCAP, bprm->mm);
 }
 
