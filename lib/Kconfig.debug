@@ -812,6 +812,38 @@ config DEBUG_OBJECTS_PERCPU_COUNTER
 	  percpu counter routines to track the life time of percpu counter
 	  objects and validate the percpu counter operations.
 
+config DEBUG_OBJECTS_POOL_SIZE_SHIFT
+	int "Metadata objects pool size"
+	depends on DEBUG_OBJECTS
+	range 0 21
+	default 6
+	help
+	  To debug object operations a certain amount of metadata has to be
+	  kept per object that is tracked. During boot a static amount of pre-
+	  allocated objects is set aside to be used for this task until such a
+	  time a dynamic allocator can be used. Once a dynamic allocator can be
+	  used an initial amount of objects is pre-allocated to be used when
+	  needed.
+
+	  This option sets the amount of both: the amount of initially
+	  statically allocated objects; and later the amount of dynamically
+	  pre-allocated objects. It is used as exponent to the power of 2,
+	  multiplied by the batch size used to set how many objects are move
+	  between pools at once.
+
+	  For example, when left at the default of 6:
+	      N_OBJECTS = 2^DEBUG_OBJECTS_POOL_SIZE_SHIFT * N_BATCH
+	      N_OBJECTS = 2^6 * 16
+	      N_OBJECTS = 1024
+	  By increasing the option by 1, you double the amount of objects.
+
+	  An indication that you need to increase this option is that during
+	  boot you see messages like this:
+	      ODEBUG: Out of memory. ODEBUG disabled
+
+	  If in doubt, leave the default.
+
+
 config DEBUG_OBJECTS_ENABLE_DEFAULT
 	int "debug_objects bootup default value (0-1)"
 	range 0 1
