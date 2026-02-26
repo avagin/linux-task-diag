@@ -102,6 +102,8 @@ struct extent_buffer {
 	/* >= 0 if eb belongs to a log tree, -1 otherwise */
 	s8 log_index;
 	u8 folio_shift;
+	/* Inhibits WB_SYNC_NONE writeback when > 0. */
+	atomic_t writeback_inhibitors;
 	struct rcu_head rcu_head;
 
 	struct rw_semaphore lock;
@@ -380,5 +382,9 @@ void btrfs_extent_buffer_leak_debug_check(struct btrfs_fs_info *fs_info);
 #else
 #define btrfs_extent_buffer_leak_debug_check(fs_info)	do {} while (0)
 #endif
+
+void btrfs_inhibit_eb_writeback(struct btrfs_trans_handle *trans,
+			       struct extent_buffer *eb);
+void btrfs_uninhibit_all_eb_writeback(struct btrfs_trans_handle *trans);
 
 #endif
