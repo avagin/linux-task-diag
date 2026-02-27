@@ -124,7 +124,7 @@ impl VmaRef {
         // sufficient for this method call. This method has no requirements on the vma flags. The
         // address range is checked to be within the vma.
         unsafe {
-            bindings::zap_page_range_single(self.as_ptr(), address, size, core::ptr::null_mut())
+            bindings::zap_page_range_single(self.as_ptr(), address, size)
         };
     }
 
