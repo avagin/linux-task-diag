@@ -32,6 +32,7 @@
 #include <linux/vmstat.h>
 #include <linux/kexec_handover.h>
 #include <linux/hugetlb.h>
+#include <linux/mmzone_lock.h>
 #include "internal.h"
 #include "slab.h"
 #include "shuffle.h"
@@ -1436,7 +1437,7 @@ static void __meminit zone_init_internals(struct zone *zone, enum zone_type idx,
 	zone_set_nid(zone, nid);
 	zone->name = zone_names[idx];
 	zone->zone_pgdat = NODE_DATA(nid);
-	spin_lock_init(&zone->lock);
+	zone_lock_init(zone);
 	zone_seqlock_init(zone);
 	zone_pcp_init(zone);
 }

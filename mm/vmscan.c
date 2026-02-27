@@ -58,6 +58,7 @@
 #include <linux/random.h>
 #include <linux/mmu_notifier.h>
 #include <linux/parser.h>
+#include <linux/mmzone_lock.h>
 
 #include <asm/tlbflush.h>
 #include <asm/div64.h>
@@ -7266,9 +7267,9 @@ out:
 
 			/* Increments are under the zone lock */
 			zone = pgdat->node_zones + i;
-			spin_lock_irqsave(&zone->lock, flags);
+			zone_lock_irqsave(zone, flags);
 			zone->watermark_boost -= min(zone->watermark_boost, zone_boosts[i]);
-			spin_unlock_irqrestore(&zone->lock, flags);
+			zone_unlock_irqrestore(zone, flags);
 		}
 
 		/*
