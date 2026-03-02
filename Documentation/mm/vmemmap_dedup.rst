@@ -128,8 +128,8 @@ The first page of ``struct page`` (page 0) associated with the HugeTLB page
 contains the 4 ``struct page`` necessary to describe the HugeTLB. The remaining
 pages of ``struct page`` (page 1 to page 7) are tail pages.
 
-The optimization is only applied when the size of the struct page is a power-of-2
-In this case, all tail pages of the same order are identical. See
+The optimization is only applied when the size of the struct page is a power
+of 2. In this case, all tail pages of the same order are identical. See
 compound_head(). This allows us to remap the tail pages of the vmemmap to a
 shared, read-only page. The head page is also remapped to a new page. This
 allows the original vmemmap pages to be freed.
@@ -143,7 +143,7 @@ Here is how things look after remapping::
  |           |                     |     1     | ------┐
  |           |                     +-----------+       |
  |           |                     |     2     | ------┼        +----------------------------+
- |           |                     +-----------+       |        | A single, per-node page    |
+ |           |                     +-----------+       |        | A single, per-zone page    |
  |           |                     |     3     | ------┼------> | frame shared among all     |
  |           |                     +-----------+       |        | hugepages of the same size |
  |           |                     |     4     | ------┼        +----------------------------+
