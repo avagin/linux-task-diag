@@ -371,7 +371,7 @@ int page_reporting_register(struct page_reporting_dev_info *prdev)
 
 	if (page_reporting_order == -1) {
 		if (prdev->order != PAGE_REPORTING_ORDER_UNSPECIFIED &&
-			prdev->order <= MAX_PAGE_ORDER)
+		    prdev->order <= MAX_PAGE_ORDER)
 			page_reporting_order = prdev->order;
 		else
 			page_reporting_order = pageblock_order;
