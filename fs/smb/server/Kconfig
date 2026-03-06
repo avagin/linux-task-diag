@@ -49,6 +49,7 @@ if SMB_SERVER
 config SMB_SERVER_SMBDIRECT
 	bool "Support for SMB Direct protocol"
 	depends on SMB_SERVER && INFINIBAND && INFINIBAND_ADDR_TRANS
+	depends on SMB_SERVER=m || INFINIBAND=y
 	select SMB_COMMON_SMBDIRECT
 	default n
 
