@@ -1047,6 +1047,7 @@ ifdef CONFIG_LTO_CLANG_FULL
 CC_FLAGS_LTO	:= -flto
 else
 CC_FLAGS_LTO	:= -flto=thin -fsplit-lto-unit
+KBUILD_LDFLAGS += $(call ld-option,--lto-whole-program-visibility -mllvm -always-rename-promoted-locals=false)
 endif
 CC_FLAGS_LTO	+= -fvisibility=hidden
 
