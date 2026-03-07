@@ -14611,6 +14611,7 @@ F:	tools/testing/nvdimm/
 
 LIBRARY CODE
 M:	Andrew Morton <akpm@linux-foundation.org>
+R:	Josh Law <objecting@objecting.org>
 L:	linux-kernel@vger.kernel.org
 S:	Supported
 T:	git git://git.kernel.org/pub/scm/linux/kernel/git/akpm/mm.git mm-nonmm-unstable
