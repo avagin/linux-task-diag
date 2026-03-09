@@ -4059,8 +4059,9 @@ free_objcg:
 		if (pn && pn->orig_objcg) {
 			obj_cgroup_put(pn->orig_objcg);
 			/*
-			 * Reset pn->orig_objcg to NULL to prevent obj_cgroup_put()
-			 * from being called agagin in __mem_cgroup_free().
+			 * Reset pn->orig_objcg to NULL to prevent
+			 * obj_cgroup_put() from being called again in
+			 * __mem_cgroup_free().
 			 */
 			pn->orig_objcg = NULL;
 		}
