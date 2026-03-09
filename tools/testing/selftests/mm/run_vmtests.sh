@@ -491,6 +491,8 @@ CATEGORY="thp" run_test ./khugepaged -s 4 all:shmem
 
 CATEGORY="thp" run_test ./transhuge-stress -d 20
 
+CATEGORY="thp" run_test ./thp_sysfs_test.sh
+
 # Try to create XFS if not provided
 if [ -z "${SPLIT_HUGE_PAGE_TEST_XFS_PATH}" ]; then
     if [ "${HAVE_HUGEPAGES}" = "1" ]; then
