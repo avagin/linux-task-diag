@@ -195,7 +195,7 @@ parse_symbol() {
 	# Evaluate it to find the actual address
 	# The stack trace shows the return address, which is the next
 	# instruction after the actual call, so as long as it's in the same
-	# symbol, substract one from that to point the call instruction.
+	# symbol, subtract one from that to point the call instruction.
 	if [[ $decode_retaddr == false && $offset != 0 ]]; then
 		expr=$((expr-1))
 	else
