@@ -6,3 +6,14 @@ config XOR_BLOCKS
 # selected by architectures that provide an optimized XOR implementation
 config XOR_BLOCKS_ARCH
 	bool
+
+config XOR_KUNIT_TEST
+	tristate "KUnit tests for xor_gen" if !KUNIT_ALL_TESTS
+	depends on KUNIT
+	default KUNIT_ALL_TESTS
+	select XOR_BLOCKS
+	help
+	  Unit tests for the XOR library functions.
+
+	  This is intended to help people writing architecture-specific
+	  optimized versions.  If unsure, say N.
