@@ -544,18 +544,16 @@ DEFINE_BATCHED_ENTROPY(u16)
 DEFINE_BATCHED_ENTROPY(u32)
 DEFINE_BATCHED_ENTROPY(u64)
 
-u32 __get_random_u32_below(u32 ceil)
+/*
+ * This is the slow path for variable ceil. It is still fast, most of the time,
+ * by doing traditional reciprocal multiplication and opportunistically
+ * comparing the lower half to ceil itself, before falling back to computing a
+ * larger bound, and then rejecting samples whose lower half would indicate a
+ * range indivisible by ceil. The use of `-ceil % ceil` is analogous to `2^32 %
+ * ceil`, but is computable in 32-bits.
+ */
+u32 __limit_random_u32_below(u32 ceil, u32 rand)
 {
-	/*
-	 * This is the slow path for variable ceil. It is still fast, most of
-	 * the time, by doing traditional reciprocal multiplication and
-	 * opportunistically comparing the lower half to ceil itself, before
-	 * falling back to computing a larger bound, and then rejecting samples
-	 * whose lower half would indicate a range indivisible by ceil. The use
-	 * of `-ceil % ceil` is analogous to `2^32 % ceil`, but is computable
-	 * in 32-bits.
-	 */
-	u32 rand = get_random_u32();
 	u64 mult;
 
 	/*
@@ -576,6 +574,12 @@ u32 __get_random_u32_below(u32 ceil)
 			mult = (u64)ceil * get_random_u32();
 	}
 	return mult >> 32;
+}
+EXPORT_SYMBOL_GPL(__limit_random_u32_below);
+
+u32 __get_random_u32_below(u32 ceil)
+{
+	return __limit_random_u32_below(ceil, get_random_u32());
 }
 EXPORT_SYMBOL(__get_random_u32_below);
 
