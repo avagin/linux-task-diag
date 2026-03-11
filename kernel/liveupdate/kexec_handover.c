@@ -1309,6 +1309,23 @@ int kho_retrieve_subtree(const char *name, phys_addr_t *phys)
 }
 EXPORT_SYMBOL_GPL(kho_retrieve_subtree);
 
+bool pfn_is_kho_scratch(unsigned long pfn)
+{
+	unsigned int i;
+	phys_addr_t scratch_start, scratch_end, phys = __pfn_to_phys(pfn);
+
+	for (i = 0; i < kho_scratch_cnt; i++) {
+		scratch_start = kho_scratch[i].addr;
+		scratch_end = kho_scratch[i].addr + kho_scratch[i].size;
+
+		if (scratch_start <= phys && phys < scratch_end)
+			return true;
+	}
+
+	return false;
+}
+EXPORT_SYMBOL_GPL(pfn_is_kho_scratch);
+
 static int __init kho_mem_retrieve(const void *fdt)
 {
 	struct kho_radix_tree tree;
@@ -1435,12 +1452,27 @@ err_free_scratch:
 }
 fs_initcall(kho_init);
 
+static void __init kho_init_scratch_pages(void)
+{
+	if (!IS_ENABLED(CONFIG_DEFERRED_STRUCT_PAGE_INIT))
+		return;
+
+	for (int i = 0; i < kho_scratch_cnt; i++) {
+		unsigned long pfn = PFN_DOWN(kho_scratch[i].addr);
+		unsigned long end_pfn = PFN_UP(kho_scratch[i].addr + kho_scratch[i].size);
+		int nid = early_pfn_to_nid(pfn);
+
+		for (; pfn < end_pfn; pfn++)
+			init_deferred_page(pfn, nid);
+	}
+}
+
 static void __init kho_release_scratch(void)
 {
 	phys_addr_t start, end;
 	u64 i;
 
-	memmap_init_kho_scratch_pages();
+	kho_init_scratch_pages();
 
 	/*
 	 * Mark scratch mem as CMA before we return it. That way we
@@ -1469,6 +1501,7 @@ void __init kho_memory_init(void)
 			kho_in.fdt_phys = 0;
 	} else {
 		kho_reserve_scratch();
+		kho_init_scratch_pages();
 	}
 }
 

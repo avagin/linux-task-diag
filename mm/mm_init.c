@@ -797,7 +797,8 @@ void __meminit reserve_bootmem_region(phys_addr_t start,
 	for_each_valid_pfn(pfn, PFN_DOWN(start), PFN_UP(end)) {
 		struct page *page = pfn_to_page(pfn);
 
-		__init_deferred_page(pfn, nid);
+		if (!pfn_is_kho_scratch(pfn))
+			__init_deferred_page(pfn, nid);
 
 		/*
 		 * no need for atomic set_bit because the struct
@@ -2007,9 +2008,12 @@ static void __init deferred_free_pages(unsigned long pfn,
 
 	/* Free a large naturally-aligned chunk if possible */
 	if (nr_pages == MAX_ORDER_NR_PAGES && IS_MAX_ORDER_ALIGNED(pfn)) {
-		for (i = 0; i < nr_pages; i += pageblock_nr_pages)
+		for (i = 0; i < nr_pages; i += pageblock_nr_pages) {
+			if (pfn_is_kho_scratch(page_to_pfn(page + i)))
+				continue;
 			init_pageblock_migratetype(page + i, MIGRATE_MOVABLE,
 					false);
+		}
 		__free_pages_core(page, MAX_PAGE_ORDER, MEMINIT_EARLY);
 		return;
 	}
@@ -2018,7 +2022,7 @@ static void __init deferred_free_pages(unsigned long pfn,
 	accept_memory(PFN_PHYS(pfn), nr_pages * PAGE_SIZE);
 
 	for (i = 0; i < nr_pages; i++, page++, pfn++) {
-		if (pageblock_aligned(pfn))
+		if (pageblock_aligned(pfn) && !pfn_is_kho_scratch(pfn))
 			init_pageblock_migratetype(page, MIGRATE_MOVABLE,
 					false);
 		__free_pages_core(page, 0, MEMINIT_EARLY);
@@ -2089,9 +2093,11 @@ deferred_init_memmap_chunk(unsigned long start_pfn, unsigned long end_pfn,
 			unsigned long mo_pfn = ALIGN(spfn + 1, MAX_ORDER_NR_PAGES);
 			unsigned long chunk_end = min(mo_pfn, epfn);
 
-			nr_pages += deferred_init_pages(zone, spfn, chunk_end);
-			deferred_free_pages(spfn, chunk_end - spfn);
+			// KHO scratch is MAX_ORDER_NR_PAGES aligned.
+			if (!pfn_is_kho_scratch(spfn))
+				deferred_init_pages(zone, spfn, chunk_end);
 
+			deferred_free_pages(spfn, chunk_end - spfn);
 			spfn = chunk_end;
 
 			if (can_resched)
@@ -2099,6 +2105,7 @@ deferred_init_memmap_chunk(unsigned long start_pfn, unsigned long end_pfn,
 			else
 				touch_nmi_watchdog();
 		}
+		nr_pages += epfn - spfn;
 	}
 
 	return nr_pages;

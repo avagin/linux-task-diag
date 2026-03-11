@@ -35,6 +35,7 @@ void *kho_restore_vmalloc(const struct kho_vmalloc *preservation);
 int kho_add_subtree(const char *name, void *fdt);
 void kho_remove_subtree(void *fdt);
 int kho_retrieve_subtree(const char *name, phys_addr_t *phys);
+bool pfn_is_kho_scratch(unsigned long pfn);
 
 void kho_memory_init(void);
 
@@ -107,6 +108,11 @@ static inline void kho_remove_subtree(void *fdt) { }
 static inline int kho_retrieve_subtree(const char *name, phys_addr_t *phys)
 {
 	return -EOPNOTSUPP;
+}
+
+static inline bool pfn_is_kho_scratch(unsigned long pfn)
+{
+	return false;
 }
 
 static inline void kho_memory_init(void) { }
