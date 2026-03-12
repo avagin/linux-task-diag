@@ -447,9 +447,13 @@ static int fp9931_probe(struct i2c_client *client)
 				     "failed to allocate regmap!\n");
 
 	data->vin_reg = devm_regulator_get_optional(&client->dev, "vin");
-	if (IS_ERR(data->vin_reg))
-		return dev_err_probe(&client->dev, PTR_ERR(data->vin_reg),
-				     "failed to get vin regulator\n");
+	if (IS_ERR(data->vin_reg)) {
+		if (PTR_ERR(data->vin_reg) != -ENODEV)
+			return dev_err_probe(&client->dev, PTR_ERR(data->vin_reg),
+					     "failed to get vin regulator\n");
+
+		data->vin_reg = NULL;
+	}
 
 	data->pgood_gpio = devm_gpiod_get(&client->dev, "pg", GPIOD_IN);
 	if (IS_ERR(data->pgood_gpio))
