@@ -181,7 +181,6 @@ struct stmmac_tc_entry {
 
 #define STMMAC_PPS_MAX		4
 struct stmmac_pps_cfg {
-	bool available;
 	struct timespec64 start;
 	struct timespec64 period;
 };
@@ -302,9 +301,14 @@ struct stmmac_priv {
 	bool eee_active;
 	bool eee_sw_timer_en;
 	bool legacy_serdes_is_powered;
+	/* descriptor format:
+	 *  when clear: struct dma_desc or for tx TBS struct dma_edesc
+	 *  when set, struct dma_extended_desc
+	 */
+	bool extend_desc;
+	/* chain_mode: requested descriptor mode */
+	bool chain_mode;
 	unsigned int mode;
-	unsigned int chain_mode;
-	int extend_desc;
 	struct kernel_hwtstamp_config tstamp_config;
 	struct ptp_clock *ptp_clock;
 	struct ptp_clock_info ptp_clock_ops;
@@ -403,7 +407,7 @@ void stmmac_dvr_remove(struct device *dev);
 int stmmac_dvr_probe(struct device *device,
 		     struct plat_stmmacenet_data *plat_dat,
 		     struct stmmac_resources *res);
-int stmmac_reinit_queues(struct net_device *dev, u32 rx_cnt, u32 tx_cnt);
+int stmmac_reinit_queues(struct net_device *dev, u8 rx_cnt, u8 tx_cnt);
 int stmmac_reinit_ringparam(struct net_device *dev, u32 rx_size, u32 tx_size);
 int stmmac_set_clk_tx_rate(void *bsp_priv, struct clk *clk_tx_i,
 			   phy_interface_t interface, int speed);
