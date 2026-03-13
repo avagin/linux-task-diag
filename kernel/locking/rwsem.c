@@ -361,6 +361,8 @@ enum rwsem_wake_type {
  * also present in the queue. This both limits the amount of work the
  * waking thread must do and also prevents any potential counter overflow,
  * however unlikely.
+ *
+ * Return: true if wait_list isn't empty and false otherwise
  */
 #define MAX_READERS_WAKEUP	0x100
 
@@ -370,7 +372,7 @@ bool __rwsem_del_waiter(struct rw_semaphore *sem, struct rwsem_waiter *waiter)
 {
 	if (list_empty(&waiter->list)) {
 		sem->first_waiter = NULL;
-		return true;
+		return false;
 	}
 
 	if (sem->first_waiter == waiter) {
@@ -379,7 +381,7 @@ bool __rwsem_del_waiter(struct rw_semaphore *sem, struct rwsem_waiter *waiter)
 	}
 	list_del(&waiter->list);
 
-	return false;
+	return true;
 }
 
 /*
