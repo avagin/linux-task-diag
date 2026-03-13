@@ -61,6 +61,17 @@ config PCI_MESON
 	  and therefore the driver re-uses the DesignWare core functions to
 	  implement the driver.
 
+config PCIE_ANDES_QILAI
+	tristate "Andes QiLai PCIe controller"
+	depends on ARCH_ANDES || COMPILE_TEST
+	depends on PCI_MSI
+	select PCIE_DW_HOST
+	help
+	  Say Y here to enable PCIe controller support on Andes QiLai SoCs,
+	  which operate in Root Complex mode. The Andes QiLai SoC PCIe
+	  controller is based on DesignWare IP and therefore the driver
+	  re-uses the DesignWare core functions to implement the driver.
+
 config PCIE_ARTPEC6
 	bool
 
@@ -83,15 +94,6 @@ config PCIE_ARTPEC6_EP
 	help
 	  Enables support for the PCIe controller in the ARTPEC-6 SoC to work in
 	  endpoint mode. This uses the DesignWare core.
-
-config PCIE_BT1
-	tristate "Baikal-T1 PCIe controller"
-	depends on MIPS_BAIKAL_T1 || COMPILE_TEST
-	depends on PCI_MSI
-	select PCIE_DW_HOST
-	help
-	  Enables support for the PCIe controller in the Baikal-T1 SoC to work
-	  in host mode. It's based on the Synopsys DWC PCIe v4.60a IP-core.
 
 config PCI_IMX6
 	bool
@@ -121,7 +123,7 @@ config PCI_IMX6_EP
 	  DesignWare core functions to implement the driver.
 
 config PCI_LAYERSCAPE
-	bool "Freescale Layerscape PCIe controller (host mode)"
+	tristate "Freescale Layerscape PCIe controller (host mode)"
 	depends on OF && (ARM || ARCH_LAYERSCAPE || COMPILE_TEST)
 	depends on PCI_MSI
 	select PCIE_DW_HOST
