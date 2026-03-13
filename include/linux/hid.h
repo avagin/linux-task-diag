@@ -682,6 +682,7 @@ struct hid_device {
 	__s32 battery_charge_status;
 	enum hid_battery_status battery_status;
 	bool battery_avoid_query;
+	bool battery_present;
 	ktime_t battery_ratelimit_time;
 #endif
 
@@ -698,6 +699,7 @@ struct hid_device {
 	char name[128];							/* Device name */
 	char phys[64];							/* Device physical location */
 	char uniq[64];							/* Device unique identifier (serial #) */
+	u64 firmware_version;						/* Firmware version */
 
 	void *driver_data;
 
