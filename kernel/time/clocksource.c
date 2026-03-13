@@ -651,6 +651,13 @@ static void clocksource_select_watchdog(bool fallback)
 		if (cs->flags & CLOCK_SOURCE_MUST_VERIFY)
 			continue;
 
+		/*
+		 * If it's not continuous, don't put the fox in charge of
+		 * the henhouse.
+		 */
+		if (!(cs->flags & CLOCK_SOURCE_IS_CONTINUOUS))
+			continue;
+
 		/* Skip current if we were requested for a fallback. */
 		if (fallback && cs == old_wd)
 			continue;
@@ -1169,6 +1176,9 @@ void __clocksource_update_freq_scale(struct clocksource *cs, u32 scale, u32 freq
 
 		clocks_calc_mult_shift(&cs->mult, &cs->shift, freq,
 				       NSEC_PER_SEC / scale, sec * scale);
+
+		/* Update cs::freq_khz */
+		cs->freq_khz = div_u64((u64)freq * scale, 1000);
 	}
 
 	/*
@@ -1241,6 +1251,10 @@ int __clocksource_register_scale(struct clocksource *cs, u32 scale, u32 freq)
 
 	if (WARN_ON_ONCE((unsigned int)cs->id >= CSID_MAX))
 		cs->id = CSID_GENERIC;
+
+	if (WARN_ON_ONCE(!freq && cs->flags & CLOCK_SOURCE_HAS_COUPLED_CLOCK_EVENT))
+		cs->flags &= ~CLOCK_SOURCE_HAS_COUPLED_CLOCK_EVENT;
+
 	if (cs->vdso_clock_mode < 0 ||
 	    cs->vdso_clock_mode >= VDSO_CLOCKMODE_MAX) {
 		pr_warn("clocksource %s registered with invalid VDSO mode %d. Disabling VDSO support.\n",
