@@ -8,7 +8,7 @@
 # We cannot go as far as adding -Wpedantic since it emits too many warnings.
 UAPI_CFLAGS := -std=c90 -Werror=implicit-function-declaration
 
-override c_flags = $(KBUILD_USERCFLAGS) $(UAPI_CFLAGS) -Wp,-MMD,$(depfile) -I $(obj) -I $(srctree)/usr/dummy-include
+override c_flags = $(KBUILD_USERCFLAGS) $(UAPI_CFLAGS) -Wp,-MMD,$(depfile) -I $(obj)
 
 # The following are excluded for now because they fail to build.
 #
@@ -48,25 +48,13 @@ no-header-test += xen/privcmd.h
 
 # More headers are broken in some architectures
 
-ifeq ($(SRCARCH),arc)
-no-header-test += linux/bpf_perf_event.h
-endif
-
-ifeq ($(SRCARCH),openrisc)
-no-header-test += linux/bpf_perf_event.h
-endif
-
-ifeq ($(SRCARCH),powerpc)
+ifneq ($(filter arc openrisc xtensa nios2, $(SRCARCH)),)
 no-header-test += linux/bpf_perf_event.h
 endif
 
 ifeq ($(SRCARCH),sparc)
 no-header-test += asm/uctx.h
 no-header-test += asm/fbio.h
-endif
-
-ifeq ($(SRCARCH),xtensa)
-no-header-test += linux/bpf_perf_event.h
 endif
 
 # asm-generic/*.h is used by asm/*.h, and should not be included directly
@@ -140,7 +128,6 @@ endif
 
 ifeq ($(SRCARCH),nios2)
 uses-libc += asm/ptrace.h
-uses-libc += linux/bpf_perf_event.h
 endif
 
 ifeq ($(SRCARCH),s390)
@@ -150,15 +137,14 @@ endif
 
 always-y := $(patsubst $(obj)/%.h,%.hdrtest, $(shell find $(obj) -name '*.h' 2>/dev/null))
 
-target-no-libc = $(filter-out $(uses-libc), $*.h)
-target-can-compile = $(and $(filter-out $(no-header-test), $*.h), \
-                           $(or $(CONFIG_CC_CAN_LINK), $(target-no-libc)))
+target-libc = $(filter $(uses-libc), $*.h)
+target-can-compile = $(filter-out $(no-header-test), $*.h)
 
 # Include the header twice to detect missing include guard.
 quiet_cmd_hdrtest = HDRTEST $<
       cmd_hdrtest = \
 		$(CC) $(c_flags) -fsyntax-only -Werror -x c /dev/null \
-			$(if $(target-no-libc), -nostdinc) \
+			-nostdinc $(if $(target-libc), -I $(srctree)/usr/dummy-include) \
 			$(if $(target-can-compile), -include $< -include $<); \
 		$(PERL) $(src)/headers_check.pl $(obj) $<; \
 		touch $@
