@@ -13,6 +13,7 @@
 #include <drm/ttm/ttm_device.h>
 
 #include "xe_devcoredump_types.h"
+#include "xe_drm_ras_types.h"
 #include "xe_heci_gsc.h"
 #include "xe_late_bind_fw_types.h"
 #include "xe_oa_types.h"
@@ -153,6 +154,8 @@ struct xe_device {
 
 		/** @info.force_execlist: Forced execlist submission */
 		u8 force_execlist:1;
+		/** @info.has_access_counter: Device supports access counter */
+		u8 has_access_counter:1;
 		/** @info.has_asid: Has address space ID */
 		u8 has_asid:1;
 		/** @info.has_atomic_enable_pte_bit: Device has atomic enable PTE bit */
@@ -508,6 +511,9 @@ struct xe_device {
 
 	/** @pmu: performance monitoring unit */
 	struct xe_pmu pmu;
+
+	/** @ras: RAS structure for device */
+	struct xe_drm_ras ras;
 
 	/** @i2c: I2C host controller */
 	struct xe_i2c *i2c;
