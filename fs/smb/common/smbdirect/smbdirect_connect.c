@@ -790,7 +790,7 @@ static void smbdirect_connect_negotiate_recv_work(struct work_struct *work)
 
 	if (preferred_send_size > sp->max_recv_size) {
 		smbdirect_log_rdma_event(sc, SMBDIRECT_LOG_ERR,
-			"invalid: preferred_send_size=%u < max_recv_size=%u\n",
+			"invalid: preferred_send_size=%u > max_recv_size=%u\n",
 			preferred_send_size,
 			sp->max_recv_size);
 		smbdirect_socket_schedule_cleanup(sc, -ECONNABORTED);
