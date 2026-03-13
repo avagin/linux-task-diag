@@ -30,6 +30,7 @@ struct rtd_pinctrl {
 	struct pinctrl_desc desc;
 	const struct rtd_pinctrl_desc *info;
 	struct regmap *regmap_pinctrl;
+	u32 **saved_regs;
 };
 
 /* custom pinconf parameters */
@@ -293,14 +294,14 @@ static int rtd_pconf_parse_conf(struct rtd_pinctrl *data,
 
 	config_desc = rtd_pinctrl_find_config(data, pinnr);
 	if (!config_desc) {
-		dev_err(data->dev, "Not support pin config for pin: %s\n", name);
+		dev_err(data->dev, "Pin config unsupported for pin: %s\n", name);
 		return -ENOTSUPP;
 	}
 	switch ((u32)param) {
 	case PIN_CONFIG_INPUT_SCHMITT:
 	case PIN_CONFIG_INPUT_SCHMITT_ENABLE:
 		if (config_desc->smt_offset == NA) {
-			dev_err(data->dev, "Not support input schmitt for pin: %s\n", name);
+			dev_err(data->dev, "Input schmitt unsupported for pin: %s\n", name);
 			return -ENOTSUPP;
 		}
 		smt_off = config_desc->base_bit + config_desc->smt_offset;
@@ -313,7 +314,7 @@ static int rtd_pconf_parse_conf(struct rtd_pinctrl *data,
 
 	case PIN_CONFIG_DRIVE_PUSH_PULL:
 		if (config_desc->pud_en_offset == NA) {
-			dev_err(data->dev, "Not support push pull for pin: %s\n", name);
+			dev_err(data->dev, "Push pull unsupported for pin: %s\n", name);
 			return -ENOTSUPP;
 		}
 		pulen_off = config_desc->base_bit + config_desc->pud_en_offset;
@@ -325,7 +326,7 @@ static int rtd_pconf_parse_conf(struct rtd_pinctrl *data,
 
 	case PIN_CONFIG_BIAS_DISABLE:
 		if (config_desc->pud_en_offset == NA) {
-			dev_err(data->dev, "Not support bias disable for pin: %s\n", name);
+			dev_err(data->dev, "Bias disable unsupported for pin: %s\n", name);
 			return -ENOTSUPP;
 		}
 		pulen_off = config_desc->base_bit + config_desc->pud_en_offset;
@@ -337,7 +338,7 @@ static int rtd_pconf_parse_conf(struct rtd_pinctrl *data,
 
 	case PIN_CONFIG_BIAS_PULL_UP:
 		if (config_desc->pud_en_offset == NA) {
-			dev_err(data->dev, "Not support bias pull up for pin:%s\n", name);
+			dev_err(data->dev, "Bias pull up unsupported for pin:%s\n", name);
 			return -ENOTSUPP;
 		}
 		pulen_off = config_desc->base_bit + config_desc->pud_en_offset;
@@ -350,7 +351,7 @@ static int rtd_pconf_parse_conf(struct rtd_pinctrl *data,
 
 	case PIN_CONFIG_BIAS_PULL_DOWN:
 		if (config_desc->pud_en_offset == NA) {
-			dev_err(data->dev, "Not support bias pull down for pin: %s\n", name);
+			dev_err(data->dev, "Bias pull down unsupported for pin: %s\n", name);
 			return -ENOTSUPP;
 		}
 		pulen_off = config_desc->base_bit + config_desc->pud_en_offset;
@@ -384,7 +385,7 @@ static int rtd_pconf_parse_conf(struct rtd_pinctrl *data,
 				return -EINVAL;
 			break;
 		case NA:
-			dev_err(data->dev, "Not support drive strength for pin: %s\n", name);
+			dev_err(data->dev, "Drive strength unsupported for pin: %s\n", name);
 			return -ENOTSUPP;
 		default:
 			return -EINVAL;
@@ -394,7 +395,7 @@ static int rtd_pconf_parse_conf(struct rtd_pinctrl *data,
 
 	case PIN_CONFIG_POWER_SOURCE:
 		if (config_desc->power_offset == NA) {
-			dev_err(data->dev, "Not support power source for pin: %s\n", name);
+			dev_err(data->dev, "Power source unsupported for pin: %s\n", name);
 			return -ENOTSUPP;
 		}
 		reg_off = config_desc->reg_offset;
@@ -411,7 +412,7 @@ static int rtd_pconf_parse_conf(struct rtd_pinctrl *data,
 	case RTD_DRIVE_STRENGH_P:
 		sconfig_desc = rtd_pinctrl_find_sconfig(data, pinnr);
 		if (!sconfig_desc) {
-			dev_err(data->dev, "Not support P driving for pin: %s\n", name);
+			dev_err(data->dev, "P driving unsupported for pin: %s\n", name);
 			return -ENOTSUPP;
 		}
 		set_val = arg;
@@ -428,7 +429,7 @@ static int rtd_pconf_parse_conf(struct rtd_pinctrl *data,
 	case RTD_DRIVE_STRENGH_N:
 		sconfig_desc = rtd_pinctrl_find_sconfig(data, pinnr);
 		if (!sconfig_desc) {
-			dev_err(data->dev, "Not support N driving for pin: %s\n", name);
+			dev_err(data->dev, "N driving unsupported for pin: %s\n", name);
 			return -ENOTSUPP;
 		}
 		set_val = arg;
@@ -445,7 +446,7 @@ static int rtd_pconf_parse_conf(struct rtd_pinctrl *data,
 	case RTD_DUTY_CYCLE:
 		sconfig_desc = rtd_pinctrl_find_sconfig(data, pinnr);
 		if (!sconfig_desc || sconfig_desc->dcycle_offset == NA) {
-			dev_err(data->dev, "Not support duty cycle for pin: %s\n", name);
+			dev_err(data->dev, "Duty cycle unsupported for pin: %s\n", name);
 			return -ENOTSUPP;
 		}
 		set_val = arg;
@@ -456,8 +457,8 @@ static int rtd_pconf_parse_conf(struct rtd_pinctrl *data,
 		break;
 
 	default:
-		dev_err(data->dev, "unsupported pinconf: %d\n", (u32)param);
-		return -EINVAL;
+		dev_dbg(data->dev, "unsupported pinconf: %d\n", (u32)param);
+		return -ENOTSUPP;
 	}
 
 	ret = regmap_update_bits(data->regmap_pinctrl, reg_off, mask, val);
@@ -540,16 +541,39 @@ static const struct regmap_config rtd_pinctrl_regmap_config = {
 	.use_relaxed_mmio = true,
 };
 
+static int rtd_pinctrl_init_pm(struct rtd_pinctrl *data)
+{
+	const struct rtd_pin_range *pin_range = data->info->pin_range;
+	struct device *dev = data->pcdev->dev;
+	const struct rtd_reg_range *range;
+	size_t num_entries;
+	int i;
+
+	data->saved_regs = devm_kcalloc(dev, pin_range->num_ranges, sizeof(u32 *), GFP_KERNEL);
+	if (!data->saved_regs)
+		return -ENOMEM;
+
+	for (i = 0; i < pin_range->num_ranges; i++) {
+		range = &pin_range->ranges[i];
+		num_entries = range->len / 4;
+
+		data->saved_regs[i] = devm_kzalloc(dev, num_entries * sizeof(u32), GFP_KERNEL);
+		if (!data->saved_regs[i])
+			return -ENOMEM;
+	}
+
+	return 0;
+}
+
 int rtd_pinctrl_probe(struct platform_device *pdev, const struct rtd_pinctrl_desc *desc)
 {
 	struct rtd_pinctrl *data;
-	int ret;
 
 	data = devm_kzalloc(&pdev->dev, sizeof(*data), GFP_KERNEL);
 	if (!data)
 		return -ENOMEM;
 
-	data->base = of_iomap(pdev->dev.of_node, 0);
+	data->base = devm_platform_ioremap_resource(pdev, 0);
 	if (!data->base)
 		return -ENOMEM;
 
@@ -567,30 +591,95 @@ int rtd_pinctrl_probe(struct platform_device *pdev, const struct rtd_pinctrl_des
 	data->regmap_pinctrl = devm_regmap_init_mmio(data->dev, data->base,
 						     &rtd_pinctrl_regmap_config);
 
-	if (IS_ERR(data->regmap_pinctrl)) {
-		dev_err(data->dev, "failed to init regmap: %ld\n",
-			PTR_ERR(data->regmap_pinctrl));
-		ret = PTR_ERR(data->regmap_pinctrl);
-		goto unmap;
-	}
+	if (IS_ERR(data->regmap_pinctrl))
+		return dev_err_probe(data->dev, PTR_ERR(data->regmap_pinctrl),
+				     "Failed to init regmap\n");
 
-	data->pcdev = pinctrl_register(&data->desc, &pdev->dev, data);
-	if (IS_ERR(data->pcdev)) {
-		ret = PTR_ERR(data->pcdev);
-		goto unmap;
-	}
+	data->pcdev = devm_pinctrl_register(&pdev->dev, &data->desc, data);
+	if (IS_ERR(data->pcdev))
+		return dev_err_probe(data->dev, PTR_ERR(data->pcdev),
+				     "Failed to register pinctrl\n");
 
 	platform_set_drvdata(pdev, data);
 
 	dev_dbg(&pdev->dev, "probed\n");
 
-	return 0;
+	if (data->info->pin_range) {
+		if (rtd_pinctrl_init_pm(data))
+			return -ENOMEM;
+	}
 
-unmap:
-	iounmap(data->base);
-	return ret;
+	return 0;
 }
 EXPORT_SYMBOL(rtd_pinctrl_probe);
 
+static int realtek_pinctrl_suspend(struct device *dev)
+{
+	struct rtd_pinctrl *data = dev_get_drvdata(dev);
+	const struct rtd_pin_range *pin_range = data->info->pin_range;
+	const struct rtd_reg_range *range;
+	u32 *range_regs;
+	int count;
+	int i, j;
+	int ret;
+
+	if (!data->saved_regs)
+		return 0;
+
+	for (i = 0; i < pin_range->num_ranges; i++) {
+		range = &pin_range->ranges[i];
+		range_regs = data->saved_regs[i];
+		count = range->len / 4;
+
+		for (j = 0; j < count; j++) {
+			ret = regmap_read(data->regmap_pinctrl, range->offset + (j * 4),
+					  &range_regs[j]);
+			if (ret) {
+				dev_err(dev, "failed to store register 0x%x: %d\n",
+					range->offset + (j * 4), ret);
+				return ret;
+			}
+		}
+	}
+
+	return 0;
+}
+
+static int realtek_pinctrl_resume(struct device *dev)
+{
+	struct rtd_pinctrl *data = dev_get_drvdata(dev);
+	const struct rtd_pin_range *pin_range = data->info->pin_range;
+	const struct rtd_reg_range *range;
+	u32 *range_regs;
+	int count;
+	int i, j;
+	int ret;
+
+	if (!data->saved_regs)
+		return 0;
+
+	for (i = 0; i < pin_range->num_ranges; i++) {
+		range = &pin_range->ranges[i];
+		range_regs = data->saved_regs[i];
+		count = range->len / 4;
+
+		for (j = 0; j < count; j++) {
+			ret = regmap_write(data->regmap_pinctrl, range->offset + (j * 4),
+					   range_regs[j]);
+			if (ret) {
+				dev_err(dev, "failed to restore register 0x%x: %d\n",
+					range->offset + (j * 4), ret);
+				return ret;
+			}
+		}
+	}
+	return 0;
+}
+
+const struct dev_pm_ops realtek_pinctrl_pm_ops = {
+	NOIRQ_SYSTEM_SLEEP_PM_OPS(realtek_pinctrl_suspend, realtek_pinctrl_resume)
+};
+EXPORT_SYMBOL_GPL(realtek_pinctrl_pm_ops);
+
 MODULE_DESCRIPTION("Realtek DHC SoC pinctrl driver");
-MODULE_LICENSE("GPL v2");
+MODULE_LICENSE("GPL");

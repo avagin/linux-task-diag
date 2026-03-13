@@ -16,6 +16,7 @@
 #include <linux/init.h>
 #include <linux/module.h>
 #include <linux/of.h>
+#include <linux/property.h>
 #include <linux/slab.h>
 #include <linux/seq_file.h>
 
@@ -205,24 +206,27 @@ static const struct pinconf_generic_params dt_params[] = {
 };
 
 /**
- * parse_dt_cfg() - Parse DT pinconf parameters
- * @np:	DT node
+ * parse_fw_cfg() - Parse firmware pinconf parameters
+ * @fwnode:	firmware node
  * @params:	Array of describing generic parameters
  * @count:	Number of entries in @params
  * @cfg:	Array of parsed config options
  * @ncfg:	Number of entries in @cfg
  *
- * Parse the config options described in @params from @np and puts the result
+ * Parse the config options described in @params from @fwnode and puts the result
  * in @cfg. @cfg does not need to be empty, entries are added beginning at
  * @ncfg. @ncfg is updated to reflect the number of entries after parsing. @cfg
  * needs to have enough memory allocated to hold all possible entries.
  */
-static int parse_dt_cfg(struct device_node *np,
+static int parse_fw_cfg(struct fwnode_handle *fwnode,
 			const struct pinconf_generic_params *params,
 			unsigned int count, unsigned long *cfg,
 			unsigned int *ncfg)
 {
-	int i;
+	unsigned long *properties;
+	int i, test;
+
+	properties = bitmap_zalloc(count, GFP_KERNEL);
 
 	for (i = 0; i < count; i++) {
 		u32 val;
@@ -230,7 +234,7 @@ static int parse_dt_cfg(struct device_node *np,
 		const struct pinconf_generic_params *par = &params[i];
 
 		if (par->values && par->num_values) {
-			ret = fwnode_property_match_property_string(of_fwnode_handle(np),
+			ret = fwnode_property_match_property_string(fwnode,
 								    par->property,
 								    par->values, par->num_values);
 			if (ret == -ENOENT)
@@ -240,7 +244,7 @@ static int parse_dt_cfg(struct device_node *np,
 				ret = 0;
 			}
 		} else {
-			ret = of_property_read_u32(np, par->property, &val);
+			ret = fwnode_property_read_u32(fwnode, par->property, &val);
 		}
 
 		/* property not found */
@@ -251,11 +255,45 @@ static int parse_dt_cfg(struct device_node *np,
 		if (ret)
 			val = par->default_value;
 
+		/* if param is greater than count, these are custom properties */
+		if (par->param <= count) {
+			ret = test_and_set_bit(par->param, properties);
+			if (ret) {
+				pr_err("%pfw: conflicting setting detected for %s\n",
+				       fwnode, par->property);
+				bitmap_free(properties);
+				return -EINVAL;
+			}
+		}
+
 		pr_debug("found %s with value %u\n", par->property, val);
 		cfg[*ncfg] = pinconf_to_config_packed(par->param, val);
 		(*ncfg)++;
 	}
 
+	if (test_bit(PIN_CONFIG_DRIVE_STRENGTH, properties) &&
+			test_bit(PIN_CONFIG_DRIVE_STRENGTH_UA, properties))
+		pr_err("%pfw: cannot have multiple drive strength properties\n",
+		       fwnode);
+
+	test = test_bit(PIN_CONFIG_BIAS_BUS_HOLD, properties) +
+		test_bit(PIN_CONFIG_BIAS_DISABLE, properties) +
+		test_bit(PIN_CONFIG_BIAS_HIGH_IMPEDANCE, properties) +
+		test_bit(PIN_CONFIG_BIAS_PULL_UP, properties) +
+		test_bit(PIN_CONFIG_BIAS_PULL_PIN_DEFAULT, properties) +
+		test_bit(PIN_CONFIG_BIAS_PULL_DOWN, properties);
+	if (test > 1)
+		pr_err("%pfw: cannot have multiple bias configurations\n",
+		       fwnode);
+
+	test = test_bit(PIN_CONFIG_DRIVE_OPEN_DRAIN, properties) +
+		test_bit(PIN_CONFIG_DRIVE_OPEN_SOURCE, properties) +
+		test_bit(PIN_CONFIG_DRIVE_PUSH_PULL, properties);
+	if (test > 1)
+		pr_err("%pfw: cannot have multiple drive configurations\n",
+		       fwnode);
+
+	bitmap_free(properties);
 	return 0;
 }
 
@@ -334,6 +372,7 @@ int pinconf_generic_parse_dt_config(struct device_node *np,
 				    unsigned long **configs,
 				    unsigned int *nconfigs)
 {
+	struct fwnode_handle *fwnode = of_fwnode_handle(np);
 	unsigned long *cfg;
 	unsigned int max_cfg, ncfg = 0;
 	int ret;
@@ -349,12 +388,12 @@ int pinconf_generic_parse_dt_config(struct device_node *np,
 	if (!cfg)
 		return -ENOMEM;
 
-	ret = parse_dt_cfg(np, dt_params, ARRAY_SIZE(dt_params), cfg, &ncfg);
+	ret = parse_fw_cfg(fwnode, dt_params, ARRAY_SIZE(dt_params), cfg, &ncfg);
 	if (ret)
 		goto out;
 	if (pctldev && pctldev->desc->num_custom_params &&
 		pctldev->desc->custom_params) {
-		ret = parse_dt_cfg(np, pctldev->desc->custom_params,
+		ret = parse_fw_cfg(fwnode, pctldev->desc->custom_params,
 				   pctldev->desc->num_custom_params, cfg, &ncfg);
 		if (ret)
 			goto out;
