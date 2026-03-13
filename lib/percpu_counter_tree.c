@@ -458,7 +458,7 @@ long percpu_counter_tree_precise_sum(struct percpu_counter_tree *counter)
 EXPORT_SYMBOL_GPL(percpu_counter_tree_precise_sum);
 
 static
-int compare_delta(long delta, unsigned long accuracy_neg, unsigned long accuracy_pos)
+int compare_delta(long delta, unsigned long accuracy_pos, unsigned long accuracy_neg)
 {
 	if (delta >= 0) {
 		if (delta <= accuracy_pos)
