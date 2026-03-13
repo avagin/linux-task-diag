@@ -43,7 +43,6 @@ options should be enabled to use sched_ext:
     CONFIG_DEBUG_INFO_BTF=y
     CONFIG_BPF_JIT_ALWAYS_ON=y
     CONFIG_BPF_JIT_DEFAULT_ON=y
-    CONFIG_PAHOLE_HAS_BTF_TAG=y
 
 sched_ext is used only when the BPF scheduler is loaded and running.
 
@@ -58,7 +57,8 @@ in ``ops->flags``, all ``SCHED_NORMAL``, ``SCHED_BATCH``, ``SCHED_IDLE``, and
 However, when the BPF scheduler is loaded and ``SCX_OPS_SWITCH_PARTIAL`` is
 set in ``ops->flags``, only tasks with the ``SCHED_EXT`` policy are scheduled
 by sched_ext, while tasks with ``SCHED_NORMAL``, ``SCHED_BATCH`` and
-``SCHED_IDLE`` policies are scheduled by the fair-class scheduler.
+``SCHED_IDLE`` policies are scheduled by the fair-class scheduler which has
+higher sched_class precedence than ``SCHED_EXT``.
 
 Terminating the sched_ext scheduler program, triggering `SysRq-S`, or
 detection of any internal error including stalled runnable tasks aborts the
@@ -228,15 +228,22 @@ The following briefly shows how a waking task is scheduled and executed.
    scheduler can wake up any cpu using the ``scx_bpf_kick_cpu()`` helper,
    using ``ops.select_cpu()`` judiciously can be simpler and more efficient.
 
-   A task can be immediately inserted into a DSQ from ``ops.select_cpu()``
-   by calling ``scx_bpf_dsq_insert()``. If the task is inserted into
-   ``SCX_DSQ_LOCAL`` from ``ops.select_cpu()``, it will be inserted into the
-   local DSQ of whichever CPU is returned from ``ops.select_cpu()``.
-   Additionally, inserting directly from ``ops.select_cpu()`` will cause the
-   ``ops.enqueue()`` callback to be skipped.
-
    Note that the scheduler core will ignore an invalid CPU selection, for
    example, if it's outside the allowed cpumask of the task.
+
+   A task can be immediately inserted into a DSQ from ``ops.select_cpu()``
+   by calling ``scx_bpf_dsq_insert()`` or ``scx_bpf_dsq_insert_vtime()``.
+
+   If the task is inserted into ``SCX_DSQ_LOCAL`` from
+   ``ops.select_cpu()``, it will be added to the local DSQ of whichever CPU
+   is returned from ``ops.select_cpu()``. Additionally, inserting directly
+   from ``ops.select_cpu()`` will cause the ``ops.enqueue()`` callback to
+   be skipped.
+
+   Any other attempt to store a task in BPF-internal data structures from
+   ``ops.select_cpu()`` does not prevent ``ops.enqueue()`` from being
+   invoked. This is discouraged, as it can introduce racy behavior or
+   inconsistent state.
 
 2. Once the target CPU is selected, ``ops.enqueue()`` is invoked (unless the
    task was inserted directly from ``ops.select_cpu()``). ``ops.enqueue()``
@@ -250,6 +257,61 @@ The following briefly shows how a waking task is scheduled and executed.
      ``scx_bpf_dsq_insert()`` with a DSQ ID which is smaller than 2^63.
 
    * Queue the task on the BPF side.
+
+   **Task State Tracking and ops.dequeue() Semantics**
+
+   A task is in the "BPF scheduler's custody" when the BPF scheduler is
+   responsible for managing its lifecycle. A task enters custody when it is
+   dispatched to a user DSQ or stored in the BPF scheduler's internal data
+   structures. Custody is entered only from ``ops.enqueue()`` for those
+   operations. The only exception is dispatching to a user DSQ from
+   ``ops.select_cpu()``: although the task is not yet technically in BPF
+   scheduler custody at that point, the dispatch has the same semantic
+   effect as dispatching from ``ops.enqueue()`` for custody-related
+   purposes.
+
+   Once ``ops.enqueue()`` is called, the task may or may not enter custody
+   depending on what the scheduler does:
+
+   * **Directly dispatched to terminal DSQs** (``SCX_DSQ_LOCAL``,
+     ``SCX_DSQ_LOCAL_ON | cpu``, or ``SCX_DSQ_GLOBAL``): the BPF scheduler
+     is done with the task - it either goes straight to a CPU's local run
+     queue or to the global DSQ as a fallback. The task never enters (or
+     exits) BPF custody, and ``ops.dequeue()`` will not be called.
+
+   * **Dispatch to user-created DSQs** (custom DSQs): the task enters the
+     BPF scheduler's custody. When the task later leaves BPF custody
+     (dispatched to a terminal DSQ, picked by core-sched, or dequeued for
+     sleep/property changes), ``ops.dequeue()`` will be called exactly
+     once.
+
+   * **Stored in BPF data structures** (e.g., internal BPF queues): the
+     task is in BPF custody. ``ops.dequeue()`` will be called when it
+     leaves (e.g., when ``ops.dispatch()`` moves it to a terminal DSQ, or
+     on property change / sleep).
+
+   When a task leaves BPF scheduler custody, ``ops.dequeue()`` is invoked.
+   The dequeue can happen for different reasons, distinguished by flags:
+
+   1. **Regular dispatch**: when a task in BPF custody is dispatched to a
+      terminal DSQ from ``ops.dispatch()`` (leaving BPF custody for
+      execution), ``ops.dequeue()`` is triggered without any special flags.
+
+   2. **Core scheduling pick**: when ``CONFIG_SCHED_CORE`` is enabled and
+      core scheduling picks a task for execution while it's still in BPF
+      custody, ``ops.dequeue()`` is called with the
+      ``SCX_DEQ_CORE_SCHED_EXEC`` flag.
+
+   3. **Scheduling property change**: when a task property changes (via
+      operations like ``sched_setaffinity()``, ``sched_setscheduler()``,
+      priority changes, CPU migrations, etc.) while the task is still in
+      BPF custody, ``ops.dequeue()`` is called with the
+      ``SCX_DEQ_SCHED_CHANGE`` flag set in ``deq_flags``.
+
+   **Important**: Once a task has left BPF custody (e.g., after being
+   dispatched to a terminal DSQ), property changes will not trigger
+   ``ops.dequeue()``, since the task is no longer managed by the BPF
+   scheduler.
 
 3. When a CPU is ready to schedule, it first looks at its local DSQ. If
    empty, it then looks at the global DSQ. If there still isn't a task to
@@ -318,6 +380,8 @@ by a sched_ext scheduler:
                 /* Any usable CPU becomes available */
 
                 ops.dispatch(); /* Task is moved to a local DSQ */
+
+                ops.dequeue(); /* Exiting BPF scheduler */
             }
             ops.running();      /* Task starts running on its assigned CPU */
             while (task->scx.slice > 0 && task is runnable)
@@ -345,6 +409,8 @@ Where to Look
   The functions prefixed with ``scx_bpf_`` can be called from the BPF
   scheduler.
 
+* ``kernel/sched/ext_idle.c`` contains the built-in idle CPU selection policy.
+
 * ``tools/sched_ext/`` hosts example BPF scheduler implementations.
 
   * ``scx_simple[.bpf].c``: Minimal global FIFO scheduler example using a
@@ -353,13 +419,35 @@ Where to Look
   * ``scx_qmap[.bpf].c``: A multi-level FIFO scheduler supporting five
     levels of priority implemented with ``BPF_MAP_TYPE_QUEUE``.
 
+  * ``scx_central[.bpf].c``: A central FIFO scheduler where all scheduling
+    decisions are made on one CPU, demonstrating ``LOCAL_ON`` dispatching,
+    tickless operation, and kthread preemption.
+
+  * ``scx_cpu0[.bpf].c``: A scheduler that queues all tasks to a shared DSQ
+    and only dispatches them on CPU0 in FIFO order. Useful for testing bypass
+    behavior.
+
+  * ``scx_flatcg[.bpf].c``: A flattened cgroup hierarchy scheduler
+    implementing hierarchical weight-based cgroup CPU control by compounding
+    each cgroup's share at every level into a single flat scheduling layer.
+
+  * ``scx_pair[.bpf].c``: A core-scheduling example that always makes
+    sibling CPU pairs execute tasks from the same CPU cgroup.
+
+  * ``scx_sdt[.bpf].c``: A variation of ``scx_simple`` demonstrating BPF
+    arena memory management for per-task data.
+
+  * ``scx_userland[.bpf].c``: A minimal scheduler demonstrating user space
+    scheduling. Tasks with CPU affinity are direct-dispatched in FIFO order;
+    all others are scheduled in user space by a simple vruntime scheduler.
+
 ABI Instability
 ===============
 
 The APIs provided by sched_ext to BPF schedulers programs have no stability
 guarantees. This includes the ops table callbacks and constants defined in
 ``include/linux/sched/ext.h``, as well as the ``scx_bpf_`` kfuncs defined in
-``kernel/sched/ext.c``.
+``kernel/sched/ext.c`` and ``kernel/sched/ext_idle.c``.
 
 While we will attempt to provide a relatively stable API surface when
 possible, they are subject to change without warning between kernel

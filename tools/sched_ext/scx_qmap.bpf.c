@@ -26,8 +26,11 @@
 
 enum consts {
 	ONE_SEC_IN_NS		= 1000000000,
+	ONE_MSEC_IN_NS		= 1000000,
+	LOWPRI_INTV_NS		= 10 * ONE_MSEC_IN_NS,
 	SHARED_DSQ		= 0,
 	HIGHPRI_DSQ		= 1,
+	LOWPRI_DSQ		= 2,
 	HIGHPRI_WEIGHT		= 8668,		/* this is what -20 maps to */
 };
 
@@ -41,11 +44,15 @@ const volatile u32 dsp_batch;
 const volatile bool highpri_boosting;
 const volatile bool print_dsqs_and_events;
 const volatile bool print_msgs;
+const volatile u64 sub_cgroup_id;
 const volatile s32 disallow_tgid;
 const volatile bool suppress_dump;
 
 u64 nr_highpri_queued;
 u32 test_error_cnt;
+
+#define MAX_SUB_SCHEDS		8
+u64 sub_sched_cgroup_ids[MAX_SUB_SCHEDS];
 
 UEI_DEFINE(uei);
 
@@ -127,7 +134,7 @@ struct {
 } cpu_ctx_stor SEC(".maps");
 
 /* Statistics */
-u64 nr_enqueued, nr_dispatched, nr_reenqueued, nr_dequeued, nr_ddsp_from_enq;
+u64 nr_enqueued, nr_dispatched, nr_reenqueued, nr_reenqueued_cpu0, nr_dequeued, nr_ddsp_from_enq;
 u64 nr_core_sched_execed;
 u64 nr_expedited_local, nr_expedited_remote, nr_expedited_lost, nr_expedited_from_timer;
 u32 cpuperf_min, cpuperf_avg, cpuperf_max;
@@ -168,6 +175,9 @@ s32 BPF_STRUCT_OPS(qmap_select_cpu, struct task_struct *p,
 	if (!(tctx = lookup_task_ctx(p)))
 		return -ESRCH;
 
+	if (p->scx.weight < 2 && !(p->flags & PF_KTHREAD))
+		return prev_cpu;
+
 	cpu = pick_direct_dispatch_cpu(p, prev_cpu);
 
 	if (cpu >= 0) {
@@ -202,8 +212,11 @@ void BPF_STRUCT_OPS(qmap_enqueue, struct task_struct *p, u64 enq_flags)
 	void *ring;
 	s32 cpu;
 
-	if (enq_flags & SCX_ENQ_REENQ)
+	if (enq_flags & SCX_ENQ_REENQ) {
 		__sync_fetch_and_add(&nr_reenqueued, 1);
+		if (scx_bpf_task_cpu(p) == 0)
+			__sync_fetch_and_add(&nr_reenqueued_cpu0, 1);
+	}
 
 	if (p->flags & PF_KTHREAD) {
 		if (stall_kernel_nth && !(++kernel_cnt % stall_kernel_nth))
@@ -232,6 +245,13 @@ void BPF_STRUCT_OPS(qmap_enqueue, struct task_struct *p, u64 enq_flags)
 	if (tctx->force_local) {
 		tctx->force_local = false;
 		scx_bpf_dsq_insert(p, SCX_DSQ_LOCAL, slice_ns, enq_flags);
+		return;
+	}
+
+	/* see lowpri_timerfn() */
+	if (__COMPAT_has_generic_reenq() &&
+	    p->scx.weight < 2 && !(p->flags & PF_KTHREAD) && !(enq_flags & SCX_ENQ_REENQ)) {
+		scx_bpf_dsq_insert(p, LOWPRI_DSQ, slice_ns, enq_flags);
 		return;
 	}
 
@@ -450,6 +470,12 @@ void BPF_STRUCT_OPS(qmap_dispatch, s32 cpu, struct task_struct *prev)
 		cpuc->dsp_cnt = 0;
 	}
 
+	for (i = 0; i < MAX_SUB_SCHEDS; i++) {
+		if (sub_sched_cgroup_ids[i] &&
+		    scx_bpf_sub_dispatch(sub_sched_cgroup_ids[i]))
+			return;
+	}
+
 	/*
 	 * No other tasks. @prev will keep running. Update its core_sched_seq as
 	 * if the task were enqueued and dispatched immediately.
@@ -551,6 +577,10 @@ int BPF_PROG(qmap_sched_switch, bool preempt, struct task_struct *prev,
 	case 2: /* SCHED_RR */
 	case 6: /* SCHED_DEADLINE */
 		scx_bpf_reenqueue_local();
+
+		/* trigger re-enqueue on CPU0 just to exercise LOCAL_ON */
+		if (__COMPAT_has_generic_reenq())
+			scx_bpf_dsq_reenq(SCX_DSQ_LOCAL_ON | 0, 0);
 	}
 
 	return 0;
@@ -856,13 +886,35 @@ static int monitor_timerfn(void *map, int *key, struct bpf_timer *timer)
 	return 0;
 }
 
+struct lowpri_timer {
+	struct bpf_timer timer;
+};
+
+struct {
+	__uint(type, BPF_MAP_TYPE_ARRAY);
+	__uint(max_entries, 1);
+	__type(key, u32);
+	__type(value, struct lowpri_timer);
+} lowpri_timer SEC(".maps");
+
+/*
+ * Nice 19 tasks are put into the lowpri DSQ. Every 10ms, reenq is triggered and
+ * the tasks are transferred to SHARED_DSQ.
+ */
+static int lowpri_timerfn(void *map, int *key, struct bpf_timer *timer)
+{
+	scx_bpf_dsq_reenq(LOWPRI_DSQ, 0);
+	bpf_timer_start(timer, LOWPRI_INTV_NS, 0);
+	return 0;
+}
+
 s32 BPF_STRUCT_OPS_SLEEPABLE(qmap_init)
 {
 	u32 key = 0;
 	struct bpf_timer *timer;
 	s32 ret;
 
-	if (print_msgs)
+	if (print_msgs && !sub_cgroup_id)
 		print_cpus();
 
 	ret = scx_bpf_create_dsq(SHARED_DSQ, -1);
@@ -877,19 +929,67 @@ s32 BPF_STRUCT_OPS_SLEEPABLE(qmap_init)
 		return ret;
 	}
 
+	ret = scx_bpf_create_dsq(LOWPRI_DSQ, -1);
+	if (ret)
+		return ret;
+
 	timer = bpf_map_lookup_elem(&monitor_timer, &key);
 	if (!timer)
 		return -ESRCH;
-
 	bpf_timer_init(timer, &monitor_timer, CLOCK_MONOTONIC);
 	bpf_timer_set_callback(timer, monitor_timerfn);
+	ret = bpf_timer_start(timer, ONE_SEC_IN_NS, 0);
+	if (ret)
+		return ret;
 
-	return bpf_timer_start(timer, ONE_SEC_IN_NS, 0);
+	if (__COMPAT_has_generic_reenq()) {
+		/* see lowpri_timerfn() */
+		timer = bpf_map_lookup_elem(&lowpri_timer, &key);
+		if (!timer)
+			return -ESRCH;
+		bpf_timer_init(timer, &lowpri_timer, CLOCK_MONOTONIC);
+		bpf_timer_set_callback(timer, lowpri_timerfn);
+		ret = bpf_timer_start(timer, LOWPRI_INTV_NS, 0);
+		if (ret)
+			return ret;
+	}
+
+	return 0;
 }
 
 void BPF_STRUCT_OPS(qmap_exit, struct scx_exit_info *ei)
 {
 	UEI_RECORD(uei, ei);
+}
+
+s32 BPF_STRUCT_OPS(qmap_sub_attach, struct scx_sub_attach_args *args)
+{
+	s32 i;
+
+	for (i = 0; i < MAX_SUB_SCHEDS; i++) {
+		if (!sub_sched_cgroup_ids[i]) {
+			sub_sched_cgroup_ids[i] = args->ops->sub_cgroup_id;
+			bpf_printk("attaching sub-sched[%d] on %s",
+				   i, args->cgroup_path);
+			return 0;
+		}
+	}
+
+	return -ENOSPC;
+}
+
+void BPF_STRUCT_OPS(qmap_sub_detach, struct scx_sub_detach_args *args)
+{
+	s32 i;
+
+	for (i = 0; i < MAX_SUB_SCHEDS; i++) {
+		if (sub_sched_cgroup_ids[i] == args->ops->sub_cgroup_id) {
+			sub_sched_cgroup_ids[i] = 0;
+			bpf_printk("detaching sub-sched[%d] on %s",
+				   i, args->cgroup_path);
+			break;
+		}
+	}
 }
 
 SCX_OPS_DEFINE(qmap_ops,
@@ -907,6 +1007,8 @@ SCX_OPS_DEFINE(qmap_ops,
 	       .cgroup_init		= (void *)qmap_cgroup_init,
 	       .cgroup_set_weight	= (void *)qmap_cgroup_set_weight,
 	       .cgroup_set_bandwidth	= (void *)qmap_cgroup_set_bandwidth,
+	       .sub_attach		= (void *)qmap_sub_attach,
+	       .sub_detach		= (void *)qmap_sub_detach,
 	       .cpu_online		= (void *)qmap_cpu_online,
 	       .cpu_offline		= (void *)qmap_cpu_offline,
 	       .init			= (void *)qmap_init,

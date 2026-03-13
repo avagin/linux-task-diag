@@ -266,6 +266,14 @@ scx_bpf_select_cpu_and(struct task_struct *p, s32 prev_cpu, u64 wake_flags,
 	}
 }
 
+/*
+ * scx_bpf_select_cpu_and() is now an inline wrapper. Use this instead of
+ * bpf_ksym_exists(scx_bpf_select_cpu_and) to test availability.
+ */
+#define __COMPAT_HAS_scx_bpf_select_cpu_and				\
+	(bpf_core_type_exists(struct scx_bpf_select_cpu_and_args) ||	\
+	 bpf_ksym_exists(scx_bpf_select_cpu_and___compat))
+
 /**
  * scx_bpf_dsq_insert_vtime - Insert a task into the vtime priority queue of a DSQ
  * @p: task_struct to insert
@@ -373,6 +381,27 @@ static inline void scx_bpf_reenqueue_local(void)
 		scx_bpf_reenqueue_local___v2___compat();
 	else
 		scx_bpf_reenqueue_local___v1();
+}
+
+/*
+ * v6.20: New scx_bpf_dsq_reenq() that allows re-enqueues on more DSQs. This
+ * will eventually deprecate scx_bpf_reenqueue_local().
+ */
+void scx_bpf_dsq_reenq___compat(u64 dsq_id, u64 reenq_flags, const struct bpf_prog_aux *aux__prog) __ksym __weak;
+
+static inline bool __COMPAT_has_generic_reenq(void)
+{
+	return bpf_ksym_exists(scx_bpf_dsq_reenq___compat);
+}
+
+static inline void scx_bpf_dsq_reenq(u64 dsq_id, u64 reenq_flags)
+{
+	if (bpf_ksym_exists(scx_bpf_dsq_reenq___compat))
+		scx_bpf_dsq_reenq___compat(dsq_id, reenq_flags, NULL);
+	else if (dsq_id == SCX_DSQ_LOCAL && reenq_flags == 0)
+		scx_bpf_reenqueue_local();
+	else
+		scx_bpf_error("kernel too old to reenqueue foreign local or user DSQs");
 }
 
 /*
