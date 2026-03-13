@@ -291,156 +291,253 @@ int fseek(FILE *stream, long offset, int whence)
 }
 
 
-/* minimal printf(). It supports the following formats:
- *  - %[l*]{d,u,c,x,p}
- *  - %s
- *  - unknown modifiers are ignored.
+/* printf(). Supports most of the normal integer and string formats.
+ *  - %[#-+ 0][width][{l,t,z,ll,L,j,q}]{c,d,i,u,x,X,p,s,m,%}
+ *  - %% generates a single %
+ *  - %m outputs strerror(errno).
+ *  - %X outputs a..f the same as %x.
+ *  - The modifiers [#-+ 0] are currently ignored.
+ *  - No support for precision or variable widths.
+ *  - No support for floating point or wide characters.
+ *  - Invalid formats are copied to the output buffer.
+ *
+ * Called by vfprintf() and snprintf() to do the actual formatting.
+ * The callers provide a callback function to save the formatted data.
+ * The callback function is called multiple times:
+ *  - for each group of literal characters in the format string.
+ *  - for field padding.
+ *  - for each conversion specifier.
+ *  - with (NULL, 0) at the end of the __nolibc_printf.
+ * If the callback returns non-zero __nolibc_printf() immediately returns -1.
  */
-typedef int (*__nolibc_printf_cb)(intptr_t state, const char *buf, size_t size);
 
-static __attribute__((unused, format(printf, 4, 0)))
-int __nolibc_printf(__nolibc_printf_cb cb, intptr_t state, size_t n, const char *fmt, va_list args)
+typedef int (*__nolibc_printf_cb)(void *state, const char *buf, size_t size);
+
+/* This code uses 'flag' variables that are indexed by the low 6 bits
+ * of characters to optimise checks for multiple characters.
+ *
+ * _NOLIBC_PF_FLAGS_CONTAIN(flags, 'a', 'b'. ...)
+ * returns non-zero if the bit for any of the specified characters is set.
+ *
+ * _NOLIBC_PF_CHAR_IS_ONE_OF(ch, 'a', 'b'. ...)
+ * returns the flag bit for ch if it is one of the specified characters.
+ * All the characters must be in the same 32 character block (non-alphabetic,
+ * upper case, or lower case) of the ASCII character set.
+ */
+#define _NOLIBC_PF_FLAG(ch) (1u << ((ch) & 0x1f))
+#define _NOLIBC_PF_FLAG_NZ(ch) ((ch) ? _NOLIBC_PF_FLAG(ch) : 0)
+#define _NOLIBC_PF_FLAG8(cmp_1, cmp_2, cmp_3, cmp_4, cmp_5, cmp_6, cmp_7, cmp_8, ...) \
+	(_NOLIBC_PF_FLAG_NZ(cmp_1) | _NOLIBC_PF_FLAG_NZ(cmp_2) | \
+	 _NOLIBC_PF_FLAG_NZ(cmp_3) | _NOLIBC_PF_FLAG_NZ(cmp_4) | \
+	 _NOLIBC_PF_FLAG_NZ(cmp_5) | _NOLIBC_PF_FLAG_NZ(cmp_6) | \
+	 _NOLIBC_PF_FLAG_NZ(cmp_7) | _NOLIBC_PF_FLAG_NZ(cmp_8))
+#define _NOLIBC_PF_FLAGS_CONTAIN(flags, ...) \
+	((flags) & _NOLIBC_PF_FLAG8(__VA_ARGS__, 0, 0, 0, 0, 0, 0, 0))
+#define _NOLIBC_PF_CHAR_IS_ONE_OF(ch, cmp_1, ...) \
+	((unsigned int)(ch) - (cmp_1 & 0xe0) > 0x1f ? 0 : \
+		_NOLIBC_PF_FLAGS_CONTAIN(_NOLIBC_PF_FLAG(ch), cmp_1, __VA_ARGS__))
+
+static __attribute__((unused, format(printf, 3, 0)))
+int __nolibc_printf(__nolibc_printf_cb cb, void *state, const char *fmt, va_list args)
 {
-	char escape, lpref, c;
+	char ch;
 	unsigned long long v;
-	unsigned int written, width;
-	size_t len, ofs, w;
-	char tmpbuf[21];
+	long long signed_v;
+	int written, width, len;
+	unsigned int flags, ch_flag;
+	char outbuf[21];
+	char *out;
 	const char *outstr;
 
-	written = ofs = escape = lpref = 0;
+	written = 0;
 	while (1) {
-		c = fmt[ofs++];
+		outstr = fmt;
+		ch = *fmt++;
+		if (!ch)
+			break;
+
 		width = 0;
+		flags = 0;
+		if (ch != '%') {
+			while (*fmt && *fmt != '%')
+				fmt++;
+			/* Output characters from the format string. */
+			len = fmt - outstr;
+			goto do_output;
+		}
 
-		if (escape) {
-			/* we're in an escape sequence, ofs == 1 */
-			escape = 0;
+		/* we're in a format sequence */
 
-			/* width */
-			while (c >= '0' && c <= '9') {
-				width *= 10;
-				width += c - '0';
+		/* Conversion flag characters */
+		while (1) {
+			ch = *fmt++;
+			ch_flag = _NOLIBC_PF_CHAR_IS_ONE_OF(ch, ' ', '#', '+', '-', '0');
+			if (!ch_flag)
+				break;
+			flags |= ch_flag;
+		}
 
-				c = fmt[ofs++];
+		/* width */
+		while (ch >= '0' && ch <= '9') {
+			width *= 10;
+			width += ch - '0';
+
+			ch = *fmt++;
+		}
+
+		/* Length modifier.
+		 * They miss the conversion flags characters " #+-0" so can go into flags.
+		 * Change both L and ll to j (all always 64bit).
+		 */
+		if (ch == 'L')
+			ch = 'j';
+		ch_flag = _NOLIBC_PF_CHAR_IS_ONE_OF(ch, 'l', 't', 'z', 'j', 'q');
+		if (ch_flag != 0) {
+			if (ch == 'l' && fmt[0] == 'l') {
+				fmt++;
+				ch_flag = _NOLIBC_PF_FLAG('j');
+			}
+			flags |= ch_flag;
+			ch = *fmt++;
+		}
+
+		/* Conversion specifiers. */
+
+		/* Numeric and pointer conversion specifiers.
+		 *
+		 * Use an explicit bound check (rather than _NOLIBC_PF_CHAR_IS_ONE_OF())
+		 * so that 'X' can be allowed through.
+		 * 'X' gets treated and 'x' because _NOLIBC_PF_FLAG() returns the same
+		 * value for both.
+		 */
+		ch_flag = _NOLIBC_PF_FLAG(ch);
+		if (((ch >= 'a' && ch <= 'z') || ch == 'X') &&
+		    _NOLIBC_PF_FLAGS_CONTAIN(ch_flag, 'c', 'd', 'i', 'u', 'x', 'p', 's')) {
+			/* 'long' is needed for pointer/string conversions and ltz lengths.
+			 * A single test can be used provided 'p' (the same bit as '0')
+			 * is masked from flags.
+			 */
+			if (_NOLIBC_PF_FLAGS_CONTAIN(ch_flag | (flags & ~_NOLIBC_PF_FLAG('p')),
+						     'p', 's', 'l', 't', 'z')) {
+				v = va_arg(args, unsigned long);
+				signed_v = (long)v;
+			} else if (_NOLIBC_PF_FLAGS_CONTAIN(flags, 'j', 'q')) {
+				v = va_arg(args, unsigned long long);
+				signed_v = v;
+			} else {
+				v = va_arg(args, unsigned int);
+				signed_v = (int)v;
 			}
 
-			if (c == 'c' || c == 'd' || c == 'u' || c == 'x' || c == 'p') {
-				char *out = tmpbuf;
+			if (ch == 'c') {
+				/* "%c" - single character. */
+				outbuf[0] = v;
+				len = 1;
+				outstr = outbuf;
+				goto do_output;
+			}
 
-				if (c == 'p')
-					v = va_arg(args, unsigned long);
-				else if (lpref) {
-					if (lpref > 1)
-						v = va_arg(args, unsigned long long);
-					else
-						v = va_arg(args, unsigned long);
-				} else
-					v = va_arg(args, unsigned int);
+			if (ch == 's') {
+				/* "%s" - character string. */
+				outstr = (const char  *)(uintptr_t)v;
+				if (!outstr)
+					outstr = "(null)";
+				goto do_strlen_output;
+			}
 
-				if (c == 'd') {
-					/* sign-extend the value */
-					if (lpref == 0)
-						v = (long long)(int)v;
-					else if (lpref == 1)
-						v = (long long)(long)v;
+			out = outbuf;
+
+			if (_NOLIBC_PF_FLAGS_CONTAIN(ch_flag, 'd', 'i')) {
+				/* "%d" and "%i" - signed decimal numbers. */
+				if (signed_v < 0) {
+					*out++ = '-';
+					v = -(signed_v + 1);
+					v++;
 				}
+			}
 
-				switch (c) {
-				case 'c':
-					out[0] = v;
-					out[1] = 0;
-					break;
-				case 'd':
-					i64toa_r(v, out);
-					break;
-				case 'u':
-					u64toa_r(v, out);
-					break;
-				case 'p':
+			/* Convert the number to ascii in the required base. */
+			if (_NOLIBC_PF_FLAGS_CONTAIN(ch_flag, 'd', 'i', 'u')) {
+				/* Base 10 */
+				u64toa_r(v, out);
+			} else {
+				/* Base 16 */
+				if (_NOLIBC_PF_FLAGS_CONTAIN(ch_flag, 'p')) {
 					*(out++) = '0';
 					*(out++) = 'x';
-					__nolibc_fallthrough;
-				default: /* 'x' and 'p' above */
-					u64toh_r(v, out);
-					break;
 				}
-				outstr = tmpbuf;
+				u64toh_r(v, out);
 			}
-			else if (c == 's') {
-				outstr = va_arg(args, char *);
-				if (!outstr)
-					outstr="(null)";
-			}
-			else if (c == 'm') {
+
+			outstr = outbuf;
+			goto do_strlen_output;
+		}
+
+		if (ch == 'm') {
 #ifdef NOLIBC_IGNORE_ERRNO
-				outstr = "unknown error";
+			outstr = "unknown error";
 #else
-				outstr = strerror(errno);
+			outstr = strerror(errno);
 #endif /* NOLIBC_IGNORE_ERRNO */
-			}
-			else if (c == '%') {
-				/* queue it verbatim */
-				continue;
-			}
-			else {
-				/* modifiers or final 0 */
-				if (c == 'l') {
-					/* long format prefix, maintain the escape */
-					lpref++;
-				} else if (c == 'j') {
-					lpref = 2;
-				}
-				escape = 1;
-				goto do_escape;
-			}
-			len = strlen(outstr);
-			goto flush_str;
+			goto do_strlen_output;
 		}
 
-		/* not an escape sequence */
-		if (c == 0 || c == '%') {
-			/* flush pending data on escape or end */
-			escape = 1;
-			lpref = 0;
-			outstr = fmt;
-			len = ofs - 1;
-		flush_str:
-			if (n) {
-				w = len < n ? len : n;
-				n -= w;
-				while (width-- > w) {
-					if (cb(state, " ", 1) != 0)
-						return -1;
-					written += 1;
-				}
-				if (cb(state, outstr, w) != 0)
-					return -1;
-			}
+		if (ch != '%') {
+			/* Invalid format: back up to output the format characters */
+			fmt = outstr + 1;
+			/* and output a '%' now. */
+		}
+		/* %% is documented as a 'conversion specifier'.
+		 * Any flags, precision or length modifier are ignored.
+		 */
+		len = 1;
+		width = 0;
+		outstr = fmt - 1;
+		goto do_output;
 
-			written += len;
-		do_escape:
-			if (c == 0)
+do_strlen_output:
+		/* Open coded strlen() (slightly smaller). */
+		for (len = 0;; len++)
+			if (!outstr[len])
 				break;
-			fmt += ofs;
-			ofs = 0;
-			continue;
-		}
 
-		/* literal char, just queue it */
+do_output:
+		written += len;
+
+		/* Stop gcc back-merging this code into one of the conditionals above. */
+		_NOLIBC_OPTIMIZER_HIDE_VAR(len);
+
+		width -= len;
+		while (width > 0) {
+			/* Output pad in 16 byte blocks with the small block first. */
+			int pad_len = ((width - 1) & 15) + 1;
+			width -= pad_len;
+			written += pad_len;
+			if (cb(state, "                ", pad_len) != 0)
+				return -1;
+		}
+		if (cb(state, outstr, len) != 0)
+			return -1;
 	}
+
+	/* Request a final '\0' be added to the snprintf() output.
+	 * This may be the only call of the cb() function.
+	 */
+	if (cb(state, NULL, 0) != 0)
+		return -1;
+
 	return written;
 }
 
-static int __nolibc_fprintf_cb(intptr_t state, const char *buf, size_t size)
+static int __nolibc_fprintf_cb(void *stream, const char *buf, size_t size)
 {
-	return _fwrite(buf, size, (FILE *)state);
+	return _fwrite(buf, size, stream);
 }
 
 static __attribute__((unused, format(printf, 2, 0)))
 int vfprintf(FILE *stream, const char *fmt, va_list args)
 {
-	return __nolibc_printf(__nolibc_fprintf_cb, (intptr_t)stream, SIZE_MAX, fmt, args);
+	return __nolibc_printf(__nolibc_fprintf_cb, stream, fmt, args);
 }
 
 static __attribute__((unused, format(printf, 1, 0)))
@@ -498,26 +595,54 @@ int dprintf(int fd, const char *fmt, ...)
 	return ret;
 }
 
-static int __nolibc_sprintf_cb(intptr_t _state, const char *buf, size_t size)
-{
-	char **state = (char **)_state;
+struct __nolibc_sprintf_cb_state {
+	char *buf;
+	size_t space;
+};
 
-	memcpy(*state, buf, size);
-	*state += size;
+static int __nolibc_sprintf_cb(void *v_state, const char *buf, size_t size)
+{
+	struct __nolibc_sprintf_cb_state *state = v_state;
+	size_t space = state->space;
+	char *tgt;
+
+	/* Truncate the request to fit in the output buffer space.
+	 * The last byte is reserved for the terminating '\0'.
+	 * state->space can only be zero for snprintf(NULL, 0, fmt, args)
+	 * so this normally lets through calls with 'size == 0'.
+	 */
+	if (size >= space) {
+		if (space <= 1)
+			return 0;
+		size = space - 1;
+	}
+	tgt = state->buf;
+
+	/* __nolibc_printf() ends with cb(state, NULL, 0) to request the output
+	 * buffer be '\0' terminated.
+	 * That will be the only cb() call for, eg, snprintf(buf, sz, "").
+	 * Zero lengths can occur at other times (eg "%s" for an empty string).
+	 * Unconditionally write the '\0' byte to reduce code size, it is
+	 * normally overwritten by the data being output.
+	 * There is no point adding a '\0' after copied data - there is always
+	 * another call.
+	 */
+	*tgt = '\0';
+	if (size) {
+		state->space = space - size;
+		state->buf = tgt + size;
+		memcpy(tgt, buf, size);
+	}
+
 	return 0;
 }
 
 static __attribute__((unused, format(printf, 3, 0)))
 int vsnprintf(char *buf, size_t size, const char *fmt, va_list args)
 {
-	char *state = buf;
-	int ret;
+	struct __nolibc_sprintf_cb_state state = { .buf = buf, .space = size };
 
-	ret = __nolibc_printf(__nolibc_sprintf_cb, (intptr_t)&state, size, fmt, args);
-	if (ret < 0)
-		return ret;
-	buf[(size_t)ret < size ? (size_t)ret : size - 1] = '\0';
-	return ret;
+	return __nolibc_printf(__nolibc_sprintf_cb, &state, fmt, args);
 }
 
 static __attribute__((unused, format(printf, 3, 4)))
@@ -683,13 +808,29 @@ int setvbuf(FILE *stream __attribute__((unused)),
 }
 
 static __attribute__((unused))
-const char *strerror(int errno)
+int strerror_r(int errnum, char *buf, size_t buflen)
 {
-	static char buf[18] = "errno=";
+	if (buflen < 18)
+		return ERANGE;
 
-	i64toa_r(errno, &buf[6]);
+	__builtin_memcpy(buf, "errno=", 6);
+	i64toa_r(errnum, buf + 6);
+	return 0;
+}
 
-	return buf;
+static __attribute__((unused))
+const char *strerror(int errnum)
+{
+	static char buf[18];
+	char *b = buf;
+
+	/* Force gcc to use 'register offset' to access buf[]. */
+	_NOLIBC_OPTIMIZER_HIDE_VAR(b);
+
+	/* Use strerror_r() to avoid having the only .data in small programs. */
+	strerror_r(errnum, b, sizeof(buf));
+
+	return b;
 }
 
 #endif /* _NOLIBC_STDIO_H */
