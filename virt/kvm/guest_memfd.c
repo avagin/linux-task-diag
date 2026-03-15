@@ -110,7 +110,7 @@ static int kvm_gmem_prepare_folio(struct kvm *kvm, struct kvm_memory_slot *slot,
 
 static struct folio *kvm_gmem_get_folio_noalloc(struct inode *inode, pgoff_t pgoff)
 {
-	return filemap_lock_folio(inode->i_mapping, pgoff);
+	return __filemap_get_folio(inode->i_mapping, pgoff, FGP_LOCK, 0);
 }
 
 /*
