@@ -1724,7 +1724,7 @@ static int userfaultfd_writeprotect(struct userfaultfd_ctx *ctx,
 	struct userfaultfd_wake_range range;
 	bool mode_wp, mode_dontwake;
 
-	if (atomic_read(&ctx->mmap_changing))
+	if (unlikely(atomic_read(&ctx->mmap_changing)))
 		return -EAGAIN;
 
 	user_uffdio_wp = (struct uffdio_writeprotect __user *) arg;
