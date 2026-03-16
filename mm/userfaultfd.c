@@ -224,9 +224,8 @@ static int mfill_get_vma(struct mfill_state *state)
 	 * request the user to retry later
 	 */
 	down_read(&ctx->map_changing_lock);
-	state->vma = dst_vma;
 	err = -EAGAIN;
-	if (unlikely(atomic_read(&ctx->mmap_changing)))
+	if (atomic_read(&ctx->mmap_changing))
 		goto out_unlock;
 
 	err = -EINVAL;
@@ -247,7 +246,7 @@ static int mfill_get_vma(struct mfill_state *state)
 		goto out_unlock;
 
 	if (is_vm_hugetlb_page(dst_vma))
-		return 0;
+		goto out;
 
 	ops = vma_uffd_ops(dst_vma);
 	if (!ops)
@@ -257,6 +256,8 @@ static int mfill_get_vma(struct mfill_state *state)
 	    !ops->get_folio_noalloc)
 		goto out_unlock;
 
+out:
+	state->vma = dst_vma;
 	return 0;
 
 out_unlock:
@@ -755,7 +756,7 @@ retry:
 		 */
 		down_read(&ctx->map_changing_lock);
 		err = -EAGAIN;
-		if (unlikely(atomic_read(&ctx->mmap_changing)))
+		if (atomic_read(&ctx->mmap_changing))
 			goto out_unlock;
 	}
 
@@ -1039,7 +1040,7 @@ int mwriteprotect_range(struct userfaultfd_ctx *ctx, unsigned long start,
 	 */
 	down_read(&ctx->map_changing_lock);
 	err = -EAGAIN;
-	if (unlikely(atomic_read(&ctx->mmap_changing)))
+	if (atomic_read(&ctx->mmap_changing))
 		goto out_unlock;
 
 	err = -ENOENT;
@@ -1866,7 +1867,7 @@ ssize_t move_pages(struct userfaultfd_ctx *ctx, unsigned long dst_start,
 	/* Re-check after taking map_changing_lock */
 	err = -EAGAIN;
 	down_read(&ctx->map_changing_lock);
-	if (unlikely(atomic_read(&ctx->mmap_changing)))
+	if (likely(atomic_read(&ctx->mmap_changing)))
 		goto out_unlock;
 	/*
 	 * Make sure the vma is not shared, that the src and dst remap
