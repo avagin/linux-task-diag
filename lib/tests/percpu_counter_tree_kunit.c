@@ -86,6 +86,194 @@ static void check_counters(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, 0, percpu_counter_tree_approximate_compare(&counter[0], &counter[1]));
 }
 
+static void hpcc_test_compare_value_boundaries(struct kunit *test)
+{
+	struct percpu_counter_tree pct;
+	struct percpu_counter_tree_level_item *counter_items;
+	unsigned long under = 0, over = 0;
+	int ret;
+
+	counter_items = kzalloc(percpu_counter_tree_items_size(), GFP_KERNEL);
+	KUNIT_ASSERT_PTR_NE(test, counter_items, NULL);
+	ret = percpu_counter_tree_init(&pct, counter_items, 32, GFP_KERNEL);
+	KUNIT_ASSERT_EQ(test, ret, 0);
+
+	percpu_counter_tree_set(&pct, 0);
+	percpu_counter_tree_approximate_accuracy_range(&pct, &under, &over);
+
+	/*
+	 * With approx_sum = precise_sum = 0, from the accuracy invariant:
+	 *   approx_sum - over <= precise_sum <= approx_sum + under
+	 * Positive deltas use 'under' as tolerance, negative use 'over'.
+	 */
+
+	/* --- percpu_counter_tree_approximate_compare_value --- */
+
+	/* At boundary: indeterminate */
+	KUNIT_EXPECT_EQ(test, 0,
+		percpu_counter_tree_approximate_compare_value(&pct,
+			(long)under));
+	KUNIT_EXPECT_EQ(test, 0,
+		percpu_counter_tree_approximate_compare_value(&pct,
+			-(long)over));
+
+	/* Beyond boundary: definitive */
+	KUNIT_EXPECT_EQ(test, 1,
+		percpu_counter_tree_approximate_compare_value(&pct,
+			(long)(under + 1)));
+	KUNIT_EXPECT_EQ(test, -1,
+		percpu_counter_tree_approximate_compare_value(&pct,
+			-(long)(over + 1)));
+
+	/* Asymmetric gap: catches swapped accuracy parameters */
+	if (under != over) {
+		if (under > over) {
+			KUNIT_EXPECT_EQ(test, 0,
+				percpu_counter_tree_approximate_compare_value(
+					&pct, (long)(over + 1)));
+			KUNIT_EXPECT_EQ(test, -1,
+				percpu_counter_tree_approximate_compare_value(
+					&pct, -(long)(over + 1)));
+		} else {
+			KUNIT_EXPECT_EQ(test, 1,
+				percpu_counter_tree_approximate_compare_value(
+					&pct, (long)(under + 1)));
+			KUNIT_EXPECT_EQ(test, 0,
+				percpu_counter_tree_approximate_compare_value(
+					&pct, -(long)(under + 1)));
+		}
+	}
+
+	/* --- percpu_counter_tree_precise_compare_value --- */
+
+	/*
+	 * With approx_sum = precise_sum = 0, the precise comparison
+	 * must return the exact result. At boundary values the
+	 * approximate fast-path returns indeterminate, exercising
+	 * the precise sum fallback.
+	 */
+	KUNIT_EXPECT_EQ(test, 0,
+		percpu_counter_tree_precise_compare_value(&pct, 0));
+	KUNIT_EXPECT_EQ(test, 1,
+		percpu_counter_tree_precise_compare_value(&pct,
+			(long)under));
+	KUNIT_EXPECT_EQ(test, -1,
+		percpu_counter_tree_precise_compare_value(&pct,
+			-(long)over));
+	KUNIT_EXPECT_EQ(test, 1,
+		percpu_counter_tree_precise_compare_value(&pct,
+			(long)(under + 1)));
+	KUNIT_EXPECT_EQ(test, -1,
+		percpu_counter_tree_precise_compare_value(&pct,
+			-(long)(over + 1)));
+
+	if (under != over) {
+		if (under > over) {
+			KUNIT_EXPECT_EQ(test, 1,
+				percpu_counter_tree_precise_compare_value(
+					&pct, (long)(over + 1)));
+			KUNIT_EXPECT_EQ(test, -1,
+				percpu_counter_tree_precise_compare_value(
+					&pct, -(long)(over + 1)));
+		} else {
+			KUNIT_EXPECT_EQ(test, 1,
+				percpu_counter_tree_precise_compare_value(
+					&pct, (long)(under + 1)));
+			KUNIT_EXPECT_EQ(test, -1,
+				percpu_counter_tree_precise_compare_value(
+					&pct, -(long)(under + 1)));
+		}
+	}
+
+	percpu_counter_tree_destroy(&pct);
+	kfree(counter_items);
+}
+
+static void hpcc_test_compare_counter_boundaries(struct kunit *test)
+{
+	struct percpu_counter_tree pct[2];
+	struct percpu_counter_tree_level_item *counter_items;
+	unsigned long under = 0, over = 0;
+	unsigned long combined;
+	int ret;
+
+	counter_items = kzalloc(percpu_counter_tree_items_size() * 2,
+				GFP_KERNEL);
+	KUNIT_ASSERT_PTR_NE(test, counter_items, NULL);
+	ret = percpu_counter_tree_init_many(pct, counter_items, 2, 32,
+					    GFP_KERNEL);
+	KUNIT_ASSERT_EQ(test, ret, 0);
+
+	percpu_counter_tree_approximate_accuracy_range(&pct[0],
+						       &under, &over);
+
+	/*
+	 * Both counters have the same configuration. The combined
+	 * accuracy for two-counter comparison is symmetric:
+	 *   accuracy_pos = over + under = under + over = accuracy_neg
+	 */
+	combined = under + over;
+
+	/* --- percpu_counter_tree_approximate_compare --- */
+
+	/* At boundary: indeterminate */
+	percpu_counter_tree_set(&pct[0], (long)combined);
+	percpu_counter_tree_set(&pct[1], 0);
+	KUNIT_EXPECT_EQ(test, 0,
+		percpu_counter_tree_approximate_compare(&pct[0], &pct[1]));
+
+	percpu_counter_tree_set(&pct[0], 0);
+	percpu_counter_tree_set(&pct[1], (long)combined);
+	KUNIT_EXPECT_EQ(test, 0,
+		percpu_counter_tree_approximate_compare(&pct[0], &pct[1]));
+
+	/* Beyond boundary: definitive */
+	percpu_counter_tree_set(&pct[0], (long)(combined + 1));
+	percpu_counter_tree_set(&pct[1], 0);
+	KUNIT_EXPECT_EQ(test, 1,
+		percpu_counter_tree_approximate_compare(&pct[0], &pct[1]));
+
+	percpu_counter_tree_set(&pct[0], 0);
+	percpu_counter_tree_set(&pct[1], (long)(combined + 1));
+	KUNIT_EXPECT_EQ(test, -1,
+		percpu_counter_tree_approximate_compare(&pct[0], &pct[1]));
+
+	/* --- percpu_counter_tree_precise_compare --- */
+
+	/* At boundary: precise gives exact result */
+	percpu_counter_tree_set(&pct[0], (long)combined);
+	percpu_counter_tree_set(&pct[1], 0);
+	KUNIT_EXPECT_EQ(test, 1,
+		percpu_counter_tree_precise_compare(&pct[0], &pct[1]));
+
+	percpu_counter_tree_set(&pct[0], 0);
+	percpu_counter_tree_set(&pct[1], (long)combined);
+	KUNIT_EXPECT_EQ(test, -1,
+		percpu_counter_tree_precise_compare(&pct[0], &pct[1]));
+
+	/* Beyond boundary: definitive */
+	percpu_counter_tree_set(&pct[0], (long)(combined + 1));
+	percpu_counter_tree_set(&pct[1], 0);
+	KUNIT_EXPECT_EQ(test, 1,
+		percpu_counter_tree_precise_compare(&pct[0], &pct[1]));
+
+	percpu_counter_tree_set(&pct[0], 0);
+	percpu_counter_tree_set(&pct[1], (long)(combined + 1));
+	KUNIT_EXPECT_EQ(test, -1,
+		percpu_counter_tree_precise_compare(&pct[0], &pct[1]));
+
+	/* Equal counters */
+	percpu_counter_tree_set(&pct[0], 42);
+	percpu_counter_tree_set(&pct[1], 42);
+	KUNIT_EXPECT_EQ(test, 0,
+		percpu_counter_tree_approximate_compare(&pct[0], &pct[1]));
+	KUNIT_EXPECT_EQ(test, 0,
+		percpu_counter_tree_precise_compare(&pct[0], &pct[1]));
+
+	percpu_counter_tree_destroy_many(pct, 2);
+	kfree(counter_items);
+}
+
 static int multi_thread_worker_fn(void *data)
 {
 	struct multi_thread_test_data *td = data;
@@ -383,6 +571,8 @@ static struct kunit_case hpcc_test_cases[] = {
 	KUNIT_CASE(hpcc_test_single_thread_random),
 	KUNIT_CASE(hpcc_test_multi_thread_batch_increment),
 	KUNIT_CASE(hpcc_test_multi_thread_random_walk),
+	KUNIT_CASE(hpcc_test_compare_value_boundaries),
+	KUNIT_CASE(hpcc_test_compare_counter_boundaries),
 	KUNIT_CASE(hpcc_test_init_one),
 	KUNIT_CASE(hpcc_test_set),
 	{}
