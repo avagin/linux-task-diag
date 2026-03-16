@@ -224,8 +224,9 @@ static int mfill_get_vma(struct mfill_state *state)
 	 * request the user to retry later
 	 */
 	down_read(&ctx->map_changing_lock);
+	state->vma = dst_vma;
 	err = -EAGAIN;
-	if (atomic_read(&ctx->mmap_changing))
+	if (unlikely(atomic_read(&ctx->mmap_changing)))
 		goto out_unlock;
 
 	err = -EINVAL;
@@ -246,7 +247,7 @@ static int mfill_get_vma(struct mfill_state *state)
 		goto out_unlock;
 
 	if (is_vm_hugetlb_page(dst_vma))
-		goto out;
+		return 0;
 
 	ops = vma_uffd_ops(dst_vma);
 	if (!ops)
@@ -256,8 +257,6 @@ static int mfill_get_vma(struct mfill_state *state)
 	    !ops->get_folio_noalloc)
 		goto out_unlock;
 
-out:
-	state->vma = dst_vma;
 	return 0;
 
 out_unlock:
