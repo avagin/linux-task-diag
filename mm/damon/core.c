@@ -3097,11 +3097,10 @@ static bool damon_find_biggest_system_ram(unsigned long *start,
 	struct resource res = {};
 
 	walk_system_ram_res(0, -1, &res, walk_system_ram);
-	if (res.end < res.start)
-		return false;
-
 	*start = damon_res_to_core_addr(res.start, addr_unit);
 	*end = damon_res_to_core_addr(res.end + 1, addr_unit);
+	if (*end <= *start)
+		return false;
 	return true;
 }
 
