@@ -93,6 +93,9 @@ static void hpcc_test_compare_value_boundaries(struct kunit *test)
 	unsigned long under = 0, over = 0;
 	int ret;
 
+	if (!percpu_counter_tree_items_size())
+		kunit_skip(test, "no approximation accuracy on single-CPU topology");
+
 	counter_items = kzalloc(percpu_counter_tree_items_size(), GFP_KERNEL);
 	KUNIT_ASSERT_PTR_NE(test, counter_items, NULL);
 	ret = percpu_counter_tree_init(&pct, counter_items, 32, GFP_KERNEL);
@@ -196,6 +199,9 @@ static void hpcc_test_compare_counter_boundaries(struct kunit *test)
 	unsigned long under = 0, over = 0;
 	unsigned long combined;
 	int ret;
+
+	if (!percpu_counter_tree_items_size())
+		kunit_skip(test, "no approximation accuracy on single-CPU topology");
 
 	counter_items = kzalloc(percpu_counter_tree_items_size() * 2,
 				GFP_KERNEL);
