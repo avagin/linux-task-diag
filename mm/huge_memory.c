@@ -2460,28 +2460,36 @@ int zap_huge_pmd(struct mmu_gather *tlb, struct vm_area_struct *vma,
 				WARN_ONCE(1, "Non present huge pmd without pmd migration enabled!");
 		}
 
-		if (folio_test_anon(folio)) {
-			zap_deposited_table(tlb->mm, pmd);
-			add_mm_counter(tlb->mm, MM_ANONPAGES, -HPAGE_PMD_NR);
-		} else {
-			if (arch_needs_pgtable_deposit())
+		if (folio) {
+			if (folio_test_anon(folio)) {
 				zap_deposited_table(tlb->mm, pmd);
-			add_mm_counter(tlb->mm, mm_counter_file(folio),
-				       -HPAGE_PMD_NR);
+				add_mm_counter(tlb->mm, MM_ANONPAGES, -HPAGE_PMD_NR);
+			} else {
+				if (arch_needs_pgtable_deposit())
+					zap_deposited_table(tlb->mm, pmd);
+				add_mm_counter(tlb->mm, mm_counter_file(folio),
+					       -HPAGE_PMD_NR);
 
+				/*
+				 * Use flush_needed to indicate whether the PMD entry
+				 * is present, instead of checking pmd_present() again.
+				 */
+				if (flush_needed && pmd_young(orig_pmd) &&
+				    likely(vma_has_recency(vma)))
+					folio_mark_accessed(folio);
+			}
+
+			if (folio_is_device_private(folio)) {
+				folio_remove_rmap_pmd(folio, &folio->page, vma);
+				WARN_ON_ONCE(folio_mapcount(folio) < 0);
+				folio_put(folio);
+			}
+		} else {
 			/*
-			 * Use flush_needed to indicate whether the PMD entry
-			 * is present, instead of checking pmd_present() again.
+			 * If we don't have a folio, we don't have a page
+			 * to flush or to count in RSS.
 			 */
-			if (flush_needed && pmd_young(orig_pmd) &&
-			    likely(vma_has_recency(vma)))
-				folio_mark_accessed(folio);
-		}
-
-		if (folio_is_device_private(folio)) {
-			folio_remove_rmap_pmd(folio, &folio->page, vma);
-			WARN_ON_ONCE(folio_mapcount(folio) < 0);
-			folio_put(folio);
+			flush_needed = 0;
 		}
 
 		spin_unlock(ptl);
