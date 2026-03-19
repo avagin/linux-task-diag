@@ -2732,21 +2732,28 @@ static bool can_set_ksm_flags_early(struct mmap_state *map)
 	return false;
 }
 
-static int call_action_complete(struct mmap_state *map,
-				struct mmap_action *action,
-				struct vm_area_struct *vma)
+static int call_mapped_hook(struct mmap_state *map,
+			    struct vm_area_struct *vma)
 {
-	int ret;
+	const struct vm_operations_struct *vm_ops = vma->vm_ops;
+	void *vm_private_data = vma->vm_private_data;
+	int err;
 
-	ret = mmap_action_complete(vma, action);
+	if (!vm_ops || !vm_ops->mapped)
+		return 0;
+	err = vm_ops->mapped(vma->vm_start, vma->vm_end, vma->vm_pgoff,
+			     vma->vm_file, &vm_private_data);
+	if (err) {
+		if (map->hold_file_rmap_lock)
+			i_mmap_unlock_write(vma->vm_file->f_mapping);
 
-	/* If we held the file rmap we need to release it. */
-	if (map->hold_file_rmap_lock) {
-		struct file *file = vma->vm_file;
-
-		i_mmap_unlock_write(file->f_mapping);
+		unmap_vma_locked(vma);
+		return err;
 	}
-	return ret;
+	/* Update private data if changed. */
+	if (vm_private_data != vma->vm_private_data)
+		vma->vm_private_data = vm_private_data;
+	return 0;
 }
 
 static unsigned long __mmap_region(struct file *file, unsigned long addr,
@@ -2800,8 +2807,10 @@ static unsigned long __mmap_region(struct file *file, unsigned long addr,
 	__mmap_complete(&map, vma);
 
 	if (have_mmap_prepare && allocated_new) {
-		error = call_action_complete(&map, &desc.action, vma);
-
+		error = mmap_action_complete(vma, &desc.action,
+					     map.hold_file_rmap_lock);
+		if (!error)
+			error = call_mapped_hook(&map, vma);
 		if (error)
 			return error;
 	}
