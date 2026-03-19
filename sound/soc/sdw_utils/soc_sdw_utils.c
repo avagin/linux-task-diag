@@ -724,12 +724,66 @@ struct asoc_sdw_codec_info codec_info_list[] = {
 		.dai_num = 4,
 	},
 	{
+		.part_id = 0x2A3B,
+		.name_prefix = "cs42l43",
+		.count_sidecar = asoc_sdw_bridge_cs35l56_count_sidecar,
+		.add_sidecar = asoc_sdw_bridge_cs35l56_add_sidecar,
+		.dais = {
+			{
+				.direction = {true, false},
+				.codec_name = "cs42l43-codec",
+				.dai_name = "cs42l43-dp5",
+				.dai_type = SOC_SDW_DAI_TYPE_JACK,
+				.dailink = {SOC_SDW_JACK_OUT_DAI_ID, SOC_SDW_UNUSED_DAI_ID},
+				.rtd_init = asoc_sdw_cs42l43_hs_rtd_init,
+				.controls = generic_jack_controls,
+				.num_controls = ARRAY_SIZE(generic_jack_controls),
+				.widgets = generic_jack_widgets,
+				.num_widgets = ARRAY_SIZE(generic_jack_widgets),
+			},
+			{
+				.direction = {false, true},
+				.codec_name = "cs42l43-codec",
+				.dai_name = "cs42l43-dp1",
+				.dai_type = SOC_SDW_DAI_TYPE_MIC,
+				.dailink = {SOC_SDW_UNUSED_DAI_ID, SOC_SDW_DMIC_DAI_ID},
+				.rtd_init = asoc_sdw_cs42l43_dmic_rtd_init,
+				.widgets = generic_dmic_widgets,
+				.num_widgets = ARRAY_SIZE(generic_dmic_widgets),
+				.quirk = SOC_SDW_CODEC_MIC,
+				.quirk_exclude = true,
+			},
+			{
+				.direction = {false, true},
+				.codec_name = "cs42l43-codec",
+				.dai_name = "cs42l43-dp2",
+				.dai_type = SOC_SDW_DAI_TYPE_JACK,
+				.dailink = {SOC_SDW_UNUSED_DAI_ID, SOC_SDW_JACK_IN_DAI_ID},
+			},
+			{
+				.direction = {true, false},
+				.codec_name = "cs42l43-codec",
+				.dai_name = "cs42l43-dp6",
+				.dai_type = SOC_SDW_DAI_TYPE_AMP,
+				.dailink = {SOC_SDW_AMP_OUT_DAI_ID, SOC_SDW_UNUSED_DAI_ID},
+				.init = asoc_sdw_cs42l43_spk_init,
+				.rtd_init = asoc_sdw_cs42l43_spk_rtd_init,
+				.controls = generic_spk_controls,
+				.num_controls = ARRAY_SIZE(generic_spk_controls),
+				.widgets = generic_spk_widgets,
+				.num_widgets = ARRAY_SIZE(generic_spk_widgets),
+				.quirk = SOC_SDW_CODEC_SPKR | SOC_SDW_SIDECAR_AMPS,
+			},
+		},
+		.dai_num = 4,
+	},
+	{
 		.part_id = 0x4245,
 		.name_prefix = "cs42l45",
 		.dais = {
 			{
 				.direction = {true, false},
-				.codec_name = "snd_soc_sdca.UAJ.1",
+				.codec_name = "snd_soc_sdca.UAJ",
 				.dai_name = "IT 41",
 				.dai_type = SOC_SDW_DAI_TYPE_JACK,
 				.dailink = {SOC_SDW_JACK_OUT_DAI_ID, SOC_SDW_UNUSED_DAI_ID},
@@ -737,7 +791,7 @@ struct asoc_sdw_codec_info codec_info_list[] = {
 			},
 			{
 				.direction = {false, true},
-				.codec_name = "snd_soc_sdca.SmartMic.0",
+				.codec_name = "snd_soc_sdca.SmartMic",
 				.dai_name = "OT 113",
 				.dai_type = SOC_SDW_DAI_TYPE_MIC,
 				.dailink = {SOC_SDW_UNUSED_DAI_ID, SOC_SDW_DMIC_DAI_ID},
@@ -745,7 +799,7 @@ struct asoc_sdw_codec_info codec_info_list[] = {
 			},
 			{
 				.direction = {false, true},
-				.codec_name = "snd_soc_sdca.UAJ.1",
+				.codec_name = "snd_soc_sdca.UAJ",
 				.dai_name = "OT 36",
 				.dai_type = SOC_SDW_DAI_TYPE_JACK,
 				.dailink = {SOC_SDW_UNUSED_DAI_ID, SOC_SDW_JACK_IN_DAI_ID},
@@ -754,7 +808,79 @@ struct asoc_sdw_codec_info codec_info_list[] = {
 		.dai_num = 3,
 		.auxs = {
 			{
-				.codec_name = "snd_soc_sdca.HID.2",
+				.codec_name = "snd_soc_sdca.HID",
+			},
+		},
+		.aux_num = 1,
+	},
+	{
+		.part_id = 0x4249,
+		.name_prefix = "cs42l45", /* Use same user-space as cs42l45 */
+		.dais = {
+			{
+				.direction = {true, false},
+				.codec_name = "snd_soc_sdca.UAJ",
+				.dai_name = "IT 41",
+				.dai_type = SOC_SDW_DAI_TYPE_JACK,
+				.dailink = {SOC_SDW_JACK_OUT_DAI_ID, SOC_SDW_UNUSED_DAI_ID},
+				.rtd_init = asoc_sdw_cs42l45_hs_rtd_init,
+			},
+			{
+				.direction = {false, true},
+				.codec_name = "snd_soc_sdca.SmartMic",
+				.dai_name = "OT 113",
+				.dai_type = SOC_SDW_DAI_TYPE_MIC,
+				.dailink = {SOC_SDW_UNUSED_DAI_ID, SOC_SDW_DMIC_DAI_ID},
+				.rtd_init = asoc_sdw_cs42l45_dmic_rtd_init,
+			},
+			{
+				.direction = {false, true},
+				.codec_name = "snd_soc_sdca.UAJ",
+				.dai_name = "OT 36",
+				.dai_type = SOC_SDW_DAI_TYPE_JACK,
+				.dailink = {SOC_SDW_UNUSED_DAI_ID, SOC_SDW_JACK_IN_DAI_ID},
+			},
+		},
+		.dai_num = 3,
+		.auxs = {
+			{
+				.codec_name = "snd_soc_sdca.HID",
+			},
+		},
+		.aux_num = 1,
+	},
+	{
+		.part_id = 0x4747,
+		.name_prefix = "cs47l47",
+		.dais = {
+			{
+				.direction = {true, false},
+				.codec_name = "snd_soc_sdca.UAJ",
+				.dai_name = "IT 41",
+				.dai_type = SOC_SDW_DAI_TYPE_JACK,
+				.dailink = {SOC_SDW_JACK_OUT_DAI_ID, SOC_SDW_UNUSED_DAI_ID},
+				.rtd_init = asoc_sdw_cs47l47_hs_rtd_init,
+			},
+			{
+				.direction = {false, true},
+				.codec_name = "snd_soc_sdca.SmartMic",
+				.dai_name = "OT 113",
+				.dai_type = SOC_SDW_DAI_TYPE_MIC,
+				.dailink = {SOC_SDW_UNUSED_DAI_ID, SOC_SDW_DMIC_DAI_ID},
+				.rtd_init = asoc_sdw_cs47l47_dmic_rtd_init,
+			},
+			{
+				.direction = {false, true},
+				.codec_name = "snd_soc_sdca.UAJ",
+				.dai_name = "OT 36",
+				.dai_type = SOC_SDW_DAI_TYPE_JACK,
+				.dailink = {SOC_SDW_UNUSED_DAI_ID, SOC_SDW_JACK_IN_DAI_ID},
+			},
+		},
+		.dai_num = 3,
+		.auxs = {
+			{
+				.codec_name = "snd_soc_sdca.HID",
 			},
 		},
 		.aux_num = 1,
@@ -1215,8 +1341,18 @@ const char *asoc_sdw_get_codec_name(struct device *dev,
 				    const struct snd_soc_acpi_link_adr *adr_link,
 				    int adr_index)
 {
-	if (dai_info->codec_name)
-		return devm_kstrdup(dev, dai_info->codec_name, GFP_KERNEL);
+	if (dai_info->codec_name) {
+		struct snd_soc_component *component;
+
+		component = snd_soc_lookup_component_by_name(dai_info->codec_name);
+		if (component) {
+			dev_dbg(dev, "%s found component %s for codec_name %s\n",
+				__func__, component->name, dai_info->codec_name);
+			return devm_kstrdup(dev, component->name, GFP_KERNEL);
+		} else {
+			return devm_kstrdup(dev, dai_info->codec_name, GFP_KERNEL);
+		}
+	}
 
 	return _asoc_sdw_get_codec_name(dev, adr_link, adr_index);
 }
@@ -1528,7 +1664,17 @@ int asoc_sdw_parse_sdw_endpoints(struct snd_soc_card *card,
 				return -EINVAL;
 
 			for (j = 0; j < codec_info->aux_num; j++) {
-				soc_aux->dlc.name = codec_info->auxs[j].codec_name;
+				struct snd_soc_component *component;
+
+				component = snd_soc_lookup_component_by_name(codec_info->auxs[j].codec_name);
+				if (component) {
+					dev_dbg(dev, "%s found component %s for aux name %s\n",
+						__func__, component->name,
+						codec_info->auxs[j].codec_name);
+					soc_aux->dlc.name = component->name;
+				} else {
+					soc_aux->dlc.name = codec_info->auxs[j].codec_name;
+				}
 				soc_aux++;
 			}
 
