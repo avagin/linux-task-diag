@@ -183,6 +183,7 @@ create_elf_tables(struct linux_binprm *bprm, const struct elfhdr *exec,
 	int ei_index;
 	const struct cred *cred = current_cred();
 	struct vm_area_struct *vma;
+	bool user_hwcap = mm_flags_test(MMF_USER_HWCAP, mm);
 
 	/*
 	 * In some cases (e.g. Hyper-Threading), we want to avoid L1
@@ -247,7 +248,8 @@ create_elf_tables(struct linux_binprm *bprm, const struct elfhdr *exec,
 	 */
 	ARCH_DLINFO;
 #endif
-	NEW_AUX_ENT(AT_HWCAP, bprm->hwcap);
+	NEW_AUX_ENT(AT_HWCAP, user_hwcap ?
+		    (bprm->hwcap & ELF_HWCAP) : ELF_HWCAP);
 	NEW_AUX_ENT(AT_PAGESZ, ELF_EXEC_PAGESIZE);
 	NEW_AUX_ENT(AT_CLKTCK, CLOCKS_PER_SEC);
 	NEW_AUX_ENT(AT_PHDR, phdr_addr);
@@ -265,13 +267,16 @@ create_elf_tables(struct linux_binprm *bprm, const struct elfhdr *exec,
 	NEW_AUX_ENT(AT_SECURE, bprm->secureexec);
 	NEW_AUX_ENT(AT_RANDOM, (elf_addr_t)(unsigned long)u_rand_bytes);
 #ifdef ELF_HWCAP2
-	NEW_AUX_ENT(AT_HWCAP2, bprm->hwcap2);
+	NEW_AUX_ENT(AT_HWCAP2, user_hwcap ?
+		    (bprm->hwcap2 & ELF_HWCAP2) : ELF_HWCAP2);
 #endif
 #ifdef ELF_HWCAP3
-	NEW_AUX_ENT(AT_HWCAP3, bprm->hwcap3);
+	NEW_AUX_ENT(AT_HWCAP3, user_hwcap ?
+		    (bprm->hwcap3 & ELF_HWCAP3) : ELF_HWCAP3);
 #endif
 #ifdef ELF_HWCAP4
-	NEW_AUX_ENT(AT_HWCAP4, bprm->hwcap4);
+	NEW_AUX_ENT(AT_HWCAP4, user_hwcap ?
+		    (bprm->hwcap4 & ELF_HWCAP4) : ELF_HWCAP4);
 #endif
 	NEW_AUX_ENT(AT_EXECFN, bprm->exec);
 	if (k_platform) {

@@ -1454,17 +1454,6 @@ static struct linux_binprm *alloc_bprm(int fd, struct filename *filename, int fl
 	 */
 	bprm->is_check = !!(flags & AT_EXECVE_CHECK);
 
-	bprm->hwcap = ELF_HWCAP;
-#ifdef ELF_HWCAP2
-	bprm->hwcap2 = ELF_HWCAP2;
-#endif
-#ifdef ELF_HWCAP3
-	bprm->hwcap3 = ELF_HWCAP3;
-#endif
-#ifdef ELF_HWCAP4
-	bprm->hwcap4 = ELF_HWCAP4;
-#endif
-
 	retval = bprm_mm_init(bprm);
 	if (!retval)
 		return bprm;
@@ -1810,21 +1799,21 @@ static void inherit_hwcap(struct linux_binprm *bprm)
 		case AT_NULL:
 			goto done;
 		case AT_HWCAP:
-			bprm->hwcap = val & ELF_HWCAP;
+			bprm->hwcap = val;
 			break;
 #ifdef ELF_HWCAP2
 		case AT_HWCAP2:
-			bprm->hwcap2 = val & ELF_HWCAP2;
+			bprm->hwcap2 = val;
 			break;
 #endif
 #ifdef ELF_HWCAP3
 		case AT_HWCAP3:
-			bprm->hwcap3 = val & ELF_HWCAP3;
+			bprm->hwcap3 = val;
 			break;
 #endif
 #ifdef ELF_HWCAP4
 		case AT_HWCAP4:
-			bprm->hwcap4 = val & ELF_HWCAP4;
+			bprm->hwcap4 = val;
 			break;
 #endif
 		default:

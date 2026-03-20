@@ -508,6 +508,7 @@ static int create_elf_fdpic_tables(struct linux_binprm *bprm,
 	unsigned long flags = 0;
 	int ei_index;
 	elf_addr_t *elf_info;
+	bool user_hwcap = mm_flags_test(MMF_USER_HWCAP, mm);
 
 #ifdef CONFIG_MMU
 	/* In some cases (e.g. Hyper-Threading), we want to avoid L1 evictions
@@ -629,15 +630,19 @@ static int create_elf_fdpic_tables(struct linux_binprm *bprm,
 	 */
 	ARCH_DLINFO;
 #endif
-	NEW_AUX_ENT(AT_HWCAP,	bprm->hwcap);
+	NEW_AUX_ENT(AT_HWCAP,	user_hwcap ?
+				(bprm->hwcap & ELF_HWCAP) : ELF_HWCAP);
 #ifdef ELF_HWCAP2
-	NEW_AUX_ENT(AT_HWCAP2,	bprm->hwcap2);
+	NEW_AUX_ENT(AT_HWCAP2,	user_hwcap ?
+				(bprm->hwcap2 & ELF_HWCAP2) : ELF_HWCAP2);
 #endif
 #ifdef ELF_HWCAP3
-	NEW_AUX_ENT(AT_HWCAP3,	bprm->hwcap3);
+	NEW_AUX_ENT(AT_HWCAP3,	user_hwcap ?
+				(bprm->hwcap3 & ELF_HWCAP3) : ELF_HWCAP3);
 #endif
 #ifdef ELF_HWCAP4
-	NEW_AUX_ENT(AT_HWCAP4,	bprm->hwcap4);
+	NEW_AUX_ENT(AT_HWCAP4,	user_hwcap ?
+				(bprm->hwcap4 & ELF_HWCAP4) : ELF_HWCAP4);
 #endif
 	NEW_AUX_ENT(AT_PAGESZ,	PAGE_SIZE);
 	NEW_AUX_ENT(AT_CLKTCK,	CLOCKS_PER_SEC);
