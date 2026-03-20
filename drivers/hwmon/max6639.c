@@ -540,7 +540,7 @@ static int max6639_probe_child_from_dt(struct i2c_client *client,
 
 	err = of_property_read_u32(child, "pulses-per-revolution", &val);
 	if (!err) {
-		if (val < 1 || val > 5) {
+		if (val < 1 || val > 4) {
 			dev_err(dev, "invalid pulses-per-revolution %d of %pOFn\n", val, child);
 			return -EINVAL;
 		}
