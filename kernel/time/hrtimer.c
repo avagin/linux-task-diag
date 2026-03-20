@@ -534,6 +534,8 @@ static inline void debug_activate(struct hrtimer *timer, enum hrtimer_mode mode,
 		for (bool done = false; !done; active &= ~(1U << idx))			\
 			for (base = &cpu_base->clock_base[idx]; !done; done = true)
 
+#define hrtimer_from_timerqueue_node(_n) container_of_const(_n, struct hrtimer, node)
+
 #if defined(CONFIG_NO_HZ_COMMON)
 /*
  * Same as hrtimer_bases_next_event() below, but skips the excluded timer and
@@ -578,7 +580,7 @@ static __always_inline struct hrtimer *clock_base_next_timer(struct hrtimer_cloc
 {
 	struct timerqueue_linked_node *next = timerqueue_linked_first(&base->active);
 
-	return container_of(next, struct hrtimer, node);
+	return hrtimer_from_timerqueue_node(next);
 }
 
 /* Find the base with the earliest expiry */
@@ -1884,7 +1886,7 @@ EXPORT_SYMBOL_GPL(hrtimer_active);
  * __run_hrtimer() invocations.
  */
 static void __run_hrtimer(struct hrtimer_cpu_base *cpu_base, struct hrtimer_clock_base *base,
-			  struct hrtimer *timer, ktime_t *now, unsigned long flags)
+			  struct hrtimer *timer, ktime_t now, unsigned long flags)
 	__must_hold(&cpu_base->lock)
 {
 	enum hrtimer_restart (*fn)(struct hrtimer *);
@@ -1960,7 +1962,7 @@ static __always_inline struct hrtimer *clock_base_next_timer_safe(struct hrtimer
 {
 	struct timerqueue_linked_node *next = timerqueue_linked_first(&base->active);
 
-	return next ? container_of(next, struct hrtimer, node) : NULL;
+	return next ? hrtimer_from_timerqueue_node(next) : NULL;
 }
 
 static void __hrtimer_run_queues(struct hrtimer_cpu_base *cpu_base, ktime_t now,
@@ -1989,7 +1991,7 @@ static void __hrtimer_run_queues(struct hrtimer_cpu_base *cpu_base, ktime_t now,
 			if (basenow < hrtimer_get_softexpires(timer))
 				break;
 
-			__run_hrtimer(cpu_base, base, timer, &basenow, flags);
+			__run_hrtimer(cpu_base, base, timer, basenow, flags);
 			if (active_mask == HRTIMER_ACTIVE_SOFT)
 				hrtimer_sync_wait_running(cpu_base, flags);
 		}
@@ -2329,7 +2331,7 @@ long hrtimer_nanosleep(ktime_t rqtp, const enum hrtimer_mode mode, const clockid
 {
 	struct restart_block *restart;
 	struct hrtimer_sleeper t;
-	int ret = 0;
+	int ret;
 
 	hrtimer_setup_sleeper_on_stack(&t, clockid, mode);
 	hrtimer_set_expires_range_ns(&t.timer, rqtp, current->timer_slack_ns);
@@ -2439,7 +2441,7 @@ static void migrate_hrtimer_list(struct hrtimer_clock_base *old_base,
 	struct hrtimer *timer;
 
 	while ((node = timerqueue_linked_first(&old_base->active))) {
-		timer = container_of(node, struct hrtimer, node);
+		timer = hrtimer_from_timerqueue_node(node);
 		BUG_ON(hrtimer_callback_running(timer));
 		debug_hrtimer_deactivate(timer);
 
