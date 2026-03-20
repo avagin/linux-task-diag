@@ -29,6 +29,7 @@ of many distributions, e.g. :
  - Ubuntu
  - OpenSUSE
  - Arch Linux
+ - Gentoo
  - NetBSD
  - FreeBSD
 
@@ -60,7 +61,7 @@ Supplemental documentation
 
 For supplemental documentation refer to the wiki:
 
-https://bottest.wiki.kernel.org/coccicheck
+https://bottest.wiki.kernel.org/coccicheck.html
 
 The wiki documentation always refers to the linux-next version of the script.
 
