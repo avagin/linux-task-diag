@@ -95,15 +95,12 @@ config GPIO_CDEV
 
 config GPIO_CDEV_V1
 	bool "Support GPIO ABI Version 1"
-	default y
 	depends on GPIO_CDEV
 	help
 	  Say Y here to support version 1 of the GPIO CDEV ABI.
 
 	  This ABI version is deprecated.
 	  Please use the latest ABI for new developments.
-
-	  If unsure, say Y.
 
 config GPIO_GENERIC
 	depends on HAS_IOMEM # Only for IOMEM drivers
@@ -1440,6 +1437,7 @@ config GPIO_JANZ_TTL
 config GPIO_KEMPLD
 	tristate "Kontron ETX / COMexpress GPIO"
 	depends on MFD_KEMPLD
+	select GPIOLIB_IRQCHIP
 	help
 	  This enables support for the PLD GPIO interface on some Kontron ETX
 	  and COMexpress (ETXexpress) modules.
