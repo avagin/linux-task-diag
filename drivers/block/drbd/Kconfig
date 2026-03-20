@@ -11,6 +11,7 @@ config BLK_DEV_DRBD
 	depends on PROC_FS && INET
 	select LRU_CACHE
 	select CRC32
+	select NET_HANDSHAKE
 	help
 
 	  NOTE: In order to authenticate connections you have to select
@@ -71,3 +72,61 @@ config DRBD_FAULT_INJECTION
 		echo 5 > /sys/module/drbd/parameters/fault_rate
 
 	  If unsure, say N.
+
+config BLK_DEV_DRBD_TCP
+	tristate "DRBD TCP transport"
+	depends on BLK_DEV_DRBD
+	default BLK_DEV_DRBD
+	help
+
+	  TCP transport support for DRBD. This is the standard transport
+	  for DRBD replication over TCP/IP networks.
+
+	  If unsure, say Y.
+
+config BLK_DEV_DRBD_LB_TCP
+	tristate "DRBD load-balanced TCP transport"
+	depends on BLK_DEV_DRBD
+	help
+
+	  Load-balanced TCP transport support for DRBD. This transport
+	  distributes DRBD replication traffic across multiple TCP
+	  connections for improved throughput.
+
+	  If unsure, say N.
+
+config BLK_DEV_DRBD_RDMA
+	tristate "DRBD RDMA transport"
+	depends on BLK_DEV_DRBD && INFINIBAND && INFINIBAND_ADDR_TRANS
+	help
+
+	  RDMA transport support for DRBD. This enables DRBD replication
+	  over RDMA-capable networks for lower latency and higher throughput.
+
+	  If unsure, say N.
+
+config DRBD_COMPAT_84
+	bool "Enable legacy (8.4) /proc/drbd and metadata compatibility"
+	depends on BLK_DEV_DRBD
+	default y
+	help
+
+	  This option enables the DRBD-8.4 style representation of
+	  DRBD devices in /proc/drbd. With DRBD 9.0, released in 2015,
+	  we deprecated this interface. The replacement is `drbdsetup
+	  status [--json] <resname>`. The new interface is optionally
+	  machine-readable, extensible, and scales to 1000s of
+	  resources. The deprecated interface had issues with all
+	  three areas.
+	  At the same time, this option also enables the DRBD driver
+	  to read and write the deprecated 8.4 version of the
+	  metadata.
+	  Only when you create a DRBD resource in the legacy way
+	  `drbdsetup new-resource <resname>` (no node-id positional
+	  argument), then the resource is put into legacy mode, and
+	  shows up in /proc/drbd, is capable of reading and writing
+	  the 8.4 metadata, and can have only a single peer. Without
+	  this compile-time option, creating a resource without a node
+	  ID is not possible.
+
+	  If unsure, say Y.

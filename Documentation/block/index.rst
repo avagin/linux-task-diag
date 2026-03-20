@@ -13,6 +13,7 @@ Block
    cmdline-partition
    data-integrity
    deadline-iosched
+   drbd-app-resync-io
    inline-encryption
    ioprio
    kyber-iosched

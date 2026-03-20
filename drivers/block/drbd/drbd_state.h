@@ -2,26 +2,19 @@
 #ifndef DRBD_STATE_H
 #define DRBD_STATE_H
 
+#include <linux/drbd_protocol.h>
+
+struct drbd_resource;
 struct drbd_device;
 struct drbd_connection;
+struct drbd_peer_device;
+struct drbd_work;
+struct twopc_request;
 
 /**
  * DOC: DRBD State macros
  *
  * These macros are used to express state changes in easily readable form.
- *
- * The NS macros expand to a mask and a value, that can be bit ored onto the
- * current state as soon as the spinlock (req_lock) was taken.
- *
- * The _NS macros are used for state functions that get called with the
- * spinlock. These macros expand directly to the new state value.
- *
- * Besides the basic forms NS() and _NS() additional _?NS[23] are defined
- * to express state changes that affect more than one aspect of the state.
- *
- * E.g. NS2(conn, C_CONNECTED, peer, R_SECONDARY)
- * Means that the network connection was established and that the peer
- * is in secondary role.
  */
 #define role_MASK R_MASK
 #define peer_MASK R_MASK
@@ -34,141 +27,168 @@ struct drbd_connection;
 #define susp_nod_MASK 1
 #define susp_fen_MASK 1
 
-#define NS(T, S) \
-	({ union drbd_state mask; mask.i = 0; mask.T = T##_MASK; mask; }), \
-	({ union drbd_state val; val.i = 0; val.T = (S); val; })
-#define NS2(T1, S1, T2, S2) \
-	({ union drbd_state mask; mask.i = 0; mask.T1 = T1##_MASK; \
-	  mask.T2 = T2##_MASK; mask; }), \
-	({ union drbd_state val; val.i = 0; val.T1 = (S1); \
-	  val.T2 = (S2); val; })
-#define NS3(T1, S1, T2, S2, T3, S3) \
-	({ union drbd_state mask; mask.i = 0; mask.T1 = T1##_MASK; \
-	  mask.T2 = T2##_MASK; mask.T3 = T3##_MASK; mask; }), \
-	({ union drbd_state val;  val.i = 0; val.T1 = (S1); \
-	  val.T2 = (S2); val.T3 = (S3); val; })
-
-#define _NS(D, T, S) \
-	D, ({ union drbd_state __ns; __ns = drbd_read_state(D); __ns.T = (S); __ns; })
-#define _NS2(D, T1, S1, T2, S2) \
-	D, ({ union drbd_state __ns; __ns = drbd_read_state(D); __ns.T1 = (S1); \
-	__ns.T2 = (S2); __ns; })
-#define _NS3(D, T1, S1, T2, S2, T3, S3) \
-	D, ({ union drbd_state __ns; __ns = drbd_read_state(D); __ns.T1 = (S1); \
-	__ns.T2 = (S2); __ns.T3 = (S3); __ns; })
-
 enum chg_state_flags {
-	CS_HARD	         = 1 << 0,
+	CS_HARD          = 1 << 0, /* Forced state change, such as a connection loss */
 	CS_VERBOSE       = 1 << 1,
 	CS_WAIT_COMPLETE = 1 << 2,
 	CS_SERIALIZE     = 1 << 3,
-	CS_ORDERED       = CS_WAIT_COMPLETE + CS_SERIALIZE,
-	CS_LOCAL_ONLY    = 1 << 4, /* Do not consider a device pair wide state change */
-	CS_DC_ROLE       = 1 << 5, /* DC = display as connection state change */
-	CS_DC_PEER       = 1 << 6,
-	CS_DC_CONN       = 1 << 7,
-	CS_DC_DISK       = 1 << 8,
-	CS_DC_PDSK       = 1 << 9,
-	CS_DC_SUSP       = 1 << 10,
-	CS_DC_MASK       = CS_DC_ROLE + CS_DC_PEER + CS_DC_CONN + CS_DC_DISK + CS_DC_PDSK,
-	CS_IGN_OUTD_FAIL = 1 << 11,
-
-	/* Make sure no meta data IO is in flight, by calling
-	 * drbd_md_get_buffer().  Used for graceful detach. */
-	CS_INHIBIT_MD_IO = 1 << 12,
+	CS_ALREADY_SERIALIZED = 1 << 4, /* resource->state_sem already taken */
+	CS_LOCAL_ONLY    = 1 << 5, /* Do not consider a cluster-wide state change */
+	CS_PREPARE	 = 1 << 6,
+	CS_PREPARED	 = 1 << 7,
+	CS_ABORT	 = 1 << 8,
+	CS_TWOPC	 = 1 << 9,
+	CS_IGN_OUTD_FAIL = 1 << 10,
+	CS_DONT_RETRY    = 1 << 11, /* Disable internal retry. Caller has a retry loop */
+	CS_FORCE_RECALC  = 1 << 13, /* Force re-evaluation of state logic */
+	CS_CLUSTER_WIDE  = 1 << 14, /* Make this a cluster wide state change! */
+	CS_FP_LOCAL_UP_TO_DATE = 1 << 15, /* force promotion by making local disk state up_to_date */
+	CS_FP_OUTDATE_PEERS = 1 << 16, /* force promotion by marking unknown peers as outdated */
+	CS_FS_IGN_OPENERS = 1 << 17, /* force demote, ignore openers */
 };
 
-/* drbd_dev_state and drbd_state are different types. This is to stress the
-   small difference. There is no suspended flag (.susp), and no suspended
-   while fence handler runs flas (susp_fen). */
-union drbd_dev_state {
-	struct {
-#if defined(__LITTLE_ENDIAN_BITFIELD)
-		unsigned role:2 ;   /* 3/4	 primary/secondary/unknown */
-		unsigned peer:2 ;   /* 3/4	 primary/secondary/unknown */
-		unsigned conn:5 ;   /* 17/32	 cstates */
-		unsigned disk:4 ;   /* 8/16	 from D_DISKLESS to D_UP_TO_DATE */
-		unsigned pdsk:4 ;   /* 8/16	 from D_DISKLESS to D_UP_TO_DATE */
-		unsigned _unused:1 ;
-		unsigned aftr_isp:1 ; /* isp .. imposed sync pause */
-		unsigned peer_isp:1 ;
-		unsigned user_isp:1 ;
-		unsigned _pad:11;   /* 0	 unused */
-#elif defined(__BIG_ENDIAN_BITFIELD)
-		unsigned _pad:11;
-		unsigned user_isp:1 ;
-		unsigned peer_isp:1 ;
-		unsigned aftr_isp:1 ; /* isp .. imposed sync pause */
-		unsigned _unused:1 ;
-		unsigned pdsk:4 ;   /* 8/16	 from D_DISKLESS to D_UP_TO_DATE */
-		unsigned disk:4 ;   /* 8/16	 from D_DISKLESS to D_UP_TO_DATE */
-		unsigned conn:5 ;   /* 17/32	 cstates */
-		unsigned peer:2 ;   /* 3/4	 primary/secondary/unknown */
-		unsigned role:2 ;   /* 3/4	 primary/secondary/unknown */
-#else
-# error "this endianess is not supported"
-#endif
-	};
-	unsigned int i;
-};
+void drbd_resume_al(struct drbd_device *device);
 
-extern enum drbd_state_rv drbd_change_state(struct drbd_device *device,
-					    enum chg_state_flags f,
-					    union drbd_state mask,
-					    union drbd_state val);
-extern void drbd_force_state(struct drbd_device *, union drbd_state,
-			union drbd_state);
-extern enum drbd_state_rv _drbd_request_state(struct drbd_device *,
-					      union drbd_state,
-					      union drbd_state,
-					      enum chg_state_flags);
+enum drbd_disk_state conn_highest_disk(struct drbd_connection *connection);
+enum drbd_disk_state conn_highest_pdsk(struct drbd_connection *connection);
 
-extern enum drbd_state_rv
-_drbd_request_state_holding_state_mutex(struct drbd_device *, union drbd_state,
-					union drbd_state, enum chg_state_flags);
+void state_change_lock(struct drbd_resource *resource,
+		       unsigned long *irq_flags, enum chg_state_flags flags);
+void state_change_unlock(struct drbd_resource *resource,
+			 unsigned long *irq_flags);
 
-extern enum drbd_state_rv _drbd_set_state(struct drbd_device *, union drbd_state,
-					  enum chg_state_flags,
-					  struct completion *done);
-extern void print_st_err(struct drbd_device *, union drbd_state,
-			union drbd_state, enum drbd_state_rv);
+void begin_state_change(struct drbd_resource *resource,
+			unsigned long *irq_flags, enum chg_state_flags flags);
+enum drbd_state_rv end_state_change(struct drbd_resource *resource,
+				    unsigned long *irq_flags, const char *tag);
+void abort_state_change(struct drbd_resource *resource,
+			unsigned long *irq_flags);
+void abort_state_change_locked(struct drbd_resource *resource);
 
-enum drbd_state_rv
-_conn_request_state(struct drbd_connection *connection, union drbd_state mask, union drbd_state val,
-		    enum chg_state_flags flags);
+void begin_state_change_locked(struct drbd_resource *resource,
+			       enum chg_state_flags flags);
+enum drbd_state_rv end_state_change_locked(struct drbd_resource *resource,
+					   const char *tag);
 
-enum drbd_state_rv
-conn_request_state(struct drbd_connection *connection, union drbd_state mask, union drbd_state val,
-		   enum chg_state_flags flags);
+void clear_remote_state_change(struct drbd_resource *resource);
+void __clear_remote_state_change(struct drbd_resource *resource);
 
-extern void drbd_resume_al(struct drbd_device *device);
-extern bool conn_all_vols_unconf(struct drbd_connection *connection);
 
-/**
- * drbd_request_state() - Request a state change
- * @device:	DRBD device.
- * @mask:	mask of state bits to change.
- * @val:	value of new state bits.
- *
- * This is the most graceful way of requesting a state change. It is verbose
- * quite verbose in case the state change is not possible, and all those
- * state changes are globally serialized.
- */
-static inline int drbd_request_state(struct drbd_device *device,
-				     union drbd_state mask,
-				     union drbd_state val)
+enum which_state;
+bool drbd_all_peer_replication(struct drbd_device *device, enum which_state which);
+union drbd_state drbd_get_device_state(struct drbd_device *device,
+				       enum which_state which);
+union drbd_state drbd_get_peer_device_state(struct drbd_peer_device *peer_device,
+					    enum which_state which);
+
+#define stable_state_change(resource, change_state) ({				\
+		enum drbd_state_rv rv;						\
+		int err;							\
+		err = wait_event_interruptible((resource)->state_wait,		\
+			(rv = (change_state)) != SS_IN_TRANSIENT_STATE);	\
+		if (err)							\
+			err = -SS_UNKNOWN_ERROR;				\
+		else								\
+			err = rv;						\
+		err;								\
+	})
+
+void nested_twopc_work(struct work_struct *work);
+void drbd_maybe_cluster_wide_reply(struct drbd_resource *resource);
+enum drbd_state_rv nested_twopc_request(struct drbd_resource *resource,
+					struct twopc_request *request);
+bool drbd_twopc_between_peer_and_me(struct drbd_connection *connection);
+bool cluster_wide_reply_ready(struct drbd_resource *resource);
+
+enum drbd_state_rv change_role(struct drbd_resource *resource,
+			       enum drbd_role role,
+			       enum chg_state_flags flags, const char *tag,
+			       const char **err_str);
+
+void __change_io_susp_user(struct drbd_resource *resource, bool value);
+enum drbd_state_rv change_io_susp_user(struct drbd_resource *resource,
+				       bool value, enum chg_state_flags flags);
+void __change_io_susp_no_data(struct drbd_resource *resource, bool value);
+void __change_io_susp_fencing(struct drbd_connection *connection, bool value);
+void __change_io_susp_quorum(struct drbd_resource *resource, bool value);
+
+void __change_disk_state(struct drbd_device *device,
+			 enum drbd_disk_state disk_state);
+void __downgrade_disk_states(struct drbd_resource *resource,
+			     enum drbd_disk_state disk_state);
+enum drbd_state_rv change_disk_state(struct drbd_device *device,
+				     enum drbd_disk_state disk_state,
+				     enum chg_state_flags flags,
+				     const char *tag, const char **err_str);
+
+void __change_cstate(struct drbd_connection *connection,
+		     enum drbd_conn_state cstate);
+enum drbd_state_rv change_cstate_tag(struct drbd_connection *connection,
+				     enum drbd_conn_state cstate,
+				     enum chg_state_flags flags,
+				     const char *tag, const char **err_str);
+static inline enum drbd_state_rv change_cstate(struct drbd_connection *connection,
+					       enum drbd_conn_state cstate,
+					       enum chg_state_flags flags)
 {
-	return _drbd_request_state(device, mask, val, CS_VERBOSE + CS_ORDERED);
+	return change_cstate_tag(connection, cstate, flags, NULL, NULL);
 }
 
-/* for use in adm_detach() (drbd_adm_detach(), drbd_adm_down()) */
-int drbd_request_detach_interruptible(struct drbd_device *device);
+void __change_peer_role(struct drbd_connection *connection,
+			enum drbd_role peer_role);
 
-enum drbd_role conn_highest_role(struct drbd_connection *connection);
-enum drbd_role conn_highest_peer(struct drbd_connection *connection);
-enum drbd_disk_state conn_highest_disk(struct drbd_connection *connection);
-enum drbd_disk_state conn_lowest_disk(struct drbd_connection *connection);
-enum drbd_disk_state conn_highest_pdsk(struct drbd_connection *connection);
-enum drbd_conns conn_lowest_conn(struct drbd_connection *connection);
+void __change_repl_state(struct drbd_peer_device *peer_device,
+			 enum drbd_repl_state repl_state);
+enum drbd_state_rv change_repl_state(struct drbd_peer_device *peer_device,
+				     enum drbd_repl_state new_repl_state,
+				     enum chg_state_flags flags,
+				     const char *tag);
+enum drbd_state_rv stable_change_repl_state(struct drbd_peer_device *peer_device,
+					    enum drbd_repl_state repl_state,
+					    enum chg_state_flags flags,
+					    const char *tag);
 
+void __change_peer_disk_state(struct drbd_peer_device *peer_device,
+			      enum drbd_disk_state disk_state);
+void __downgrade_peer_disk_states(struct drbd_connection *connection,
+				  enum drbd_disk_state disk_state);
+void __outdate_myself(struct drbd_resource *resource);
+enum drbd_state_rv change_peer_disk_state(struct drbd_peer_device *peer_device,
+					  enum drbd_disk_state disk_state,
+					  enum chg_state_flags flags,
+					  const char *tag);
+
+void __change_resync_susp_user(struct drbd_peer_device *peer_device,
+			       bool value);
+enum drbd_state_rv change_resync_susp_user(struct drbd_peer_device *peer_device,
+					   bool value,
+					   enum chg_state_flags flags);
+void __change_resync_susp_peer(struct drbd_peer_device *peer_device,
+			       bool value);
+void __change_resync_susp_dependency(struct drbd_peer_device *peer_device,
+				     bool value);
+void apply_connect(struct drbd_connection *connection, bool commit);
+
+struct drbd_work;
+
+bool resource_is_suspended(struct drbd_resource *resource,
+			   enum which_state which);
+bool is_suspended_fen(struct drbd_resource *resource, enum which_state which);
+
+enum dds_flags;
+enum determine_dev_size;
+struct resize_parms;
+
+enum determine_dev_size
+change_cluster_wide_device_size(struct drbd_device *device,
+				sector_t local_max_size,
+				uint64_t new_user_size,
+				enum dds_flags dds_flags,
+				struct resize_parms *rs);
+
+bool drbd_data_accessible(struct drbd_device *device, enum which_state which);
+bool drbd_res_data_accessible(struct drbd_resource *resource);
+
+
+void drbd_empty_twopc_work_fn(struct work_struct *work);
 #endif

@@ -8,13 +8,14 @@
   Copyright (C) 2003-2008, Philipp Reisner <philipp.reisner@linbit.com>.
   Copyright (C) 2003-2008, Lars Ellenberg <lars.ellenberg@linbit.com>.
 
-
 */
 
 #include <linux/drbd.h>
+#include <linux/array_size.h>
 #include "drbd_strings.h"
+#include <linux/drbd_protocol.h>
 
-static const char * const drbd_conn_s_names[] = {
+static const char * const __conn_state_names[] = {
 	[C_STANDALONE]       = "StandAlone",
 	[C_DISCONNECTING]    = "Disconnecting",
 	[C_UNCONNECTED]      = "Unconnected",
@@ -22,34 +23,54 @@ static const char * const drbd_conn_s_names[] = {
 	[C_BROKEN_PIPE]      = "BrokenPipe",
 	[C_NETWORK_FAILURE]  = "NetworkFailure",
 	[C_PROTOCOL_ERROR]   = "ProtocolError",
-	[C_WF_CONNECTION]    = "WFConnection",
-	[C_WF_REPORT_PARAMS] = "WFReportParams",
 	[C_TEAR_DOWN]        = "TearDown",
-	[C_CONNECTED]        = "Connected",
-	[C_STARTING_SYNC_S]  = "StartingSyncS",
-	[C_STARTING_SYNC_T]  = "StartingSyncT",
-	[C_WF_BITMAP_S]      = "WFBitMapS",
-	[C_WF_BITMAP_T]      = "WFBitMapT",
-	[C_WF_SYNC_UUID]     = "WFSyncUUID",
-	[C_SYNC_SOURCE]      = "SyncSource",
-	[C_SYNC_TARGET]      = "SyncTarget",
-	[C_PAUSED_SYNC_S]    = "PausedSyncS",
-	[C_PAUSED_SYNC_T]    = "PausedSyncT",
-	[C_VERIFY_S]         = "VerifyS",
-	[C_VERIFY_T]         = "VerifyT",
-	[C_AHEAD]            = "Ahead",
-	[C_BEHIND]           = "Behind",
+	[C_CONNECTING]       = "Connecting",
+	[C_CONNECTED]	     = "Connected",
 };
 
-static const char * const drbd_role_s_names[] = {
+struct state_names drbd_conn_state_names = {
+	.names = __conn_state_names,
+	.size = sizeof(__conn_state_names) / sizeof(__conn_state_names[0]),
+};
+
+static const char * const __repl_state_names[] = {
+	[L_OFF]              = "Off",
+	[L_ESTABLISHED]      = "Established",
+	[L_STARTING_SYNC_S]  = "StartingSyncS",
+	[L_STARTING_SYNC_T]  = "StartingSyncT",
+	[L_WF_BITMAP_S]      = "WFBitMapS",
+	[L_WF_BITMAP_T]      = "WFBitMapT",
+	[L_WF_SYNC_UUID]     = "WFSyncUUID",
+	[L_SYNC_SOURCE]      = "SyncSource",
+	[L_SYNC_TARGET]      = "SyncTarget",
+	[L_VERIFY_S]         = "VerifyS",
+	[L_VERIFY_T]         = "VerifyT",
+	[L_PAUSED_SYNC_S]    = "PausedSyncS",
+	[L_PAUSED_SYNC_T]    = "PausedSyncT",
+	[L_AHEAD]            = "Ahead",
+	[L_BEHIND]           = "Behind",
+};
+
+struct state_names drbd_repl_state_names = {
+	.names = __repl_state_names,
+	.size = sizeof(__repl_state_names) / sizeof(__repl_state_names[0]),
+};
+
+static const char * const __role_state_names[] = {
+	[R_UNKNOWN]   = "Unknown",
 	[R_PRIMARY]   = "Primary",
 	[R_SECONDARY] = "Secondary",
-	[R_UNKNOWN]   = "Unknown"
 };
 
-static const char * const drbd_disk_s_names[] = {
+struct state_names drbd_role_state_names = {
+	.names = __role_state_names,
+	.size = sizeof(__role_state_names) / sizeof(__role_state_names[0]),
+};
+
+static const char * const __disk_state_names[] = {
 	[D_DISKLESS]     = "Diskless",
 	[D_ATTACHING]    = "Attaching",
+	[D_DETACHING]    = "Detaching",
 	[D_FAILED]       = "Failed",
 	[D_NEGOTIATING]  = "Negotiating",
 	[D_INCONSISTENT] = "Inconsistent",
@@ -59,7 +80,12 @@ static const char * const drbd_disk_s_names[] = {
 	[D_UP_TO_DATE]   = "UpToDate",
 };
 
-static const char * const drbd_state_sw_errors[] = {
+struct state_names drbd_disk_state_names = {
+	.names = __disk_state_names,
+	.size = sizeof(__disk_state_names) / sizeof(__disk_state_names[0]),
+};
+
+static const char * const __error_messages[] = {
 	[-SS_TWO_PRIMARIES] = "Multiple primaries not allowed by config",
 	[-SS_NO_UP_TO_DATE_DISK] = "Need access to UpToDate data",
 	[-SS_NO_LOCAL_DISK] = "Can not resync without local disk",
@@ -73,34 +99,163 @@ static const char * const drbd_state_sw_errors[] = {
 	[-SS_DEVICE_IN_USE] = "Device is held open by someone",
 	[-SS_NO_NET_CONFIG] = "Have no net/connection configuration",
 	[-SS_NO_VERIFY_ALG] = "Need a verify algorithm to start online verify",
-	[-SS_NEED_CONNECTION] = "Need a connection to start verify or resync",
+	[-SS_NEED_CONNECTION] = "State change requires a connection",
 	[-SS_NOT_SUPPORTED] = "Peer does not support protocol",
 	[-SS_LOWER_THAN_OUTDATED] = "Disk state is lower than outdated",
 	[-SS_IN_TRANSIENT_STATE] = "In transient state, retry after next state change",
 	[-SS_CONCURRENT_ST_CHG] = "Concurrent state changes detected and aborted",
-	[-SS_OUTDATE_WO_CONN] = "Need a connection for a graceful disconnect/outdate peer",
 	[-SS_O_VOL_PEER_PRI] = "Other vol primary on peer not allowed by config",
+	[-SS_PRIMARY_READER] = "Peer may not become primary while device is opened read-only",
+	[-SS_INTERRUPTED] = "Interrupted state change",
+	[-SS_TIMEOUT] = "Timeout in operation",
+	[-SS_WEAKLY_CONNECTED] = "Primary nodes must be strongly connected among each other",
+	[-SS_NO_QUORUM] = "No quorum",
+	[-SS_ATTACH_NO_BITMAP] = "Intentional diskless peer may not attach a disk",
+	[-SS_HANDSHAKE_DISCONNECT] = "Disconnect chosen in handshake",
+	[-SS_HANDSHAKE_RETRY] = "Retry chosen in handshake",
 };
 
-const char *drbd_conn_str(enum drbd_conns s)
+struct state_names drbd_error_messages = {
+	.names = __error_messages,
+	.size = sizeof(__error_messages) / sizeof(__error_messages[0]),
+};
+
+static const char * const __packet_names[] = {
+	[P_DATA]	        = "P_DATA",
+	[P_WSAME]               = "P_WSAME",
+	[P_TRIM]                = "P_TRIM",
+	[P_DATA_REPLY]	        = "P_DATA_REPLY",
+	[P_RS_DATA_REPLY]	= "P_RS_DATA_REPLY",
+	[P_BARRIER]	        = "P_BARRIER",
+	[P_BITMAP]	        = "P_BITMAP",
+	[P_BECOME_SYNC_TARGET]  = "P_BECOME_SYNC_TARGET",
+	[P_BECOME_SYNC_SOURCE]  = "P_BECOME_SYNC_SOURCE",
+	[P_UNPLUG_REMOTE]	= "P_UNPLUG_REMOTE",
+	[P_DATA_REQUEST]	= "P_DATA_REQUEST",
+	[P_RS_DATA_REQUEST]     = "P_RS_DATA_REQUEST",
+	[P_SYNC_PARAM]	        = "P_SYNC_PARAM",
+	[P_SYNC_PARAM89]	= "P_SYNC_PARAM89",
+	[P_PROTOCOL]            = "P_PROTOCOL",
+	[P_UUIDS]	        = "P_UUIDS",
+	[P_SIZES]	        = "P_SIZES",
+	[P_STATE]	        = "P_STATE",
+	[P_SYNC_UUID]           = "P_SYNC_UUID",
+	[P_AUTH_CHALLENGE]      = "P_AUTH_CHALLENGE",
+	[P_AUTH_RESPONSE]	= "P_AUTH_RESPONSE",
+	[P_PING]		= "P_PING",
+	[P_PING_ACK]	        = "P_PING_ACK",
+	[P_RECV_ACK]	        = "P_RECV_ACK",
+	[P_WRITE_ACK]	        = "P_WRITE_ACK",
+	[P_RS_WRITE_ACK]	= "P_RS_WRITE_ACK",
+	[P_SUPERSEDED]		= "P_SUPERSEDED",
+	[P_NEG_ACK]	        = "P_NEG_ACK",
+	[P_NEG_DREPLY]	        = "P_NEG_DREPLY",
+	[P_NEG_RS_DREPLY]	= "P_NEG_RS_DREPLY",
+	[P_BARRIER_ACK]	        = "P_BARRIER_ACK",
+	[P_STATE_CHG_REQ]       = "P_STATE_CHG_REQ",
+	[P_STATE_CHG_REPLY]     = "P_STATE_CHG_REPLY",
+	[P_OV_REQUEST]          = "P_OV_REQUEST",
+	[P_OV_REPLY]            = "P_OV_REPLY",
+	[P_OV_RESULT]           = "P_OV_RESULT",
+	[P_CSUM_RS_REQUEST]     = "P_CSUM_RS_REQUEST",
+	[P_RS_IS_IN_SYNC]	= "P_RS_IS_IN_SYNC",
+	[P_COMPRESSED_BITMAP]   = "P_COMPRESSED_BITMAP",
+	[P_DELAY_PROBE]         = "P_DELAY_PROBE",
+	[P_OUT_OF_SYNC]		= "P_OUT_OF_SYNC",
+	[P_RETRY_WRITE]		= "P_RETRY_WRITE",
+	[P_RS_CANCEL]		= "P_RS_CANCEL",
+	[P_RS_CANCEL_AHEAD]	= "P_RS_CANCEL_AHEAD",
+	[P_CONN_ST_CHG_REQ]	= "P_CONN_ST_CHG_REQ",
+	[P_CONN_ST_CHG_REPLY]	= "P_CONN_ST_CHG_REPLY",
+	[P_PROTOCOL_UPDATE]	= "P_PROTOCOL_UPDATE",
+	[P_TWOPC_PREPARE]	= "P_TWOPC_PREPARE",
+	[P_TWOPC_ABORT]		= "P_TWOPC_ABORT",
+	[P_DAGTAG]		= "P_DAGTAG",
+	[P_RS_THIN_REQ]         = "P_RS_THIN_REQ",
+	[P_RS_DEALLOCATED]      = "P_RS_DEALLOCATED",
+	[P_TWOPC_PREP_RSZ]      = "P_TWOPC_PREP_RSZ",
+	[P_ZEROES]              = "P_ZEROES",
+	[P_PEER_ACK]		= "P_PEER_ACK",
+	[P_PEERS_IN_SYNC]       = "P_PEERS_IN_SYNC",
+	[P_UUIDS110]            = "P_UUIDS110",
+	[P_PEER_DAGTAG]         = "P_PEER_DAGTAG",
+	[P_CURRENT_UUID]        = "P_CURRENT_UUID",
+	[P_TWOPC_COMMIT]	= "P_TWOPC_COMMIT",
+	[P_TWOPC_YES]		= "P_TWOPC_YES",
+	[P_TWOPC_NO]		= "P_TWOPC_NO",
+	[P_TWOPC_RETRY]		= "P_TWOPC_RETRY",
+	[P_CONFIRM_STABLE]      = "P_CONFIRM_STABLE",
+	[P_DISCONNECT]		= "P_DISCONNECT",
+	[P_RS_DAGTAG_REQ]	= "P_RS_DAGTAG_REQ",
+	[P_RS_CSUM_DAGTAG_REQ]	= "P_RS_CSUM_DAGTAG_REQ",
+	[P_RS_THIN_DAGTAG_REQ]	= "P_RS_THIN_DAGTAG_REQ",
+	[P_OV_DAGTAG_REQ]	= "P_OV_DAGTAG_REQ",
+	[P_OV_DAGTAG_REPLY]	= "P_OV_DAGTAG_REPLY",
+	[P_WRITE_ACK_IN_SYNC]   = "P_WRITE_ACK_IN_SYNC",
+	[P_RS_NEG_ACK]          = "P_RS_NEG_ACK",
+	[P_OV_RESULT_ID]        = "P_OV_RESULT_ID",
+	[P_RS_DEALLOCATED_ID]   = "P_RS_DEALLOCATED_ID",
+	[P_FLUSH_REQUESTS]      = "P_FLUSH_REQUESTS",
+	[P_FLUSH_FORWARD]       = "P_FLUSH_FORWARD",
+	[P_FLUSH_REQUESTS_ACK]  = "P_FLUSH_REQUESTS_ACK",
+	[P_ENABLE_REPLICATION_NEXT] = "P_ENABLE_REPLICATION_NEXT",
+	[P_ENABLE_REPLICATION]  = "P_ENABLE_REPLICATION",
+	/* enum drbd_packet, but not commands - obsoleted flags:
+	 *	P_MAY_IGNORE
+	 *	P_MAX_OPT_CMD
+	 */
+};
+
+struct state_names drbd_packet_names = {
+	.names = __packet_names,
+	.size = sizeof(__packet_names) / sizeof(__packet_names[0]),
+};
+
+const char *drbd_repl_str(enum drbd_repl_state s)
 {
-	/* enums are unsigned... */
-	return s > C_BEHIND ? "TOO_LARGE" : drbd_conn_s_names[s];
+	return (s < 0 || s >= drbd_repl_state_names.size ||
+		!drbd_repl_state_names.names[s]) ?
+		"?" : drbd_repl_state_names.names[s];
+}
+
+const char *drbd_conn_str(enum drbd_conn_state s)
+{
+	return (s < 0 || s >= drbd_conn_state_names.size ||
+		!drbd_conn_state_names.names[s]) ?
+		"?" : drbd_conn_state_names.names[s];
 }
 
 const char *drbd_role_str(enum drbd_role s)
 {
-	return s > R_SECONDARY   ? "TOO_LARGE" : drbd_role_s_names[s];
+	return (s < 0 || s >= drbd_role_state_names.size ||
+		!drbd_role_state_names.names[s]) ?
+		"?" : drbd_role_state_names.names[s];
 }
 
 const char *drbd_disk_str(enum drbd_disk_state s)
 {
-	return s > D_UP_TO_DATE    ? "TOO_LARGE" : drbd_disk_s_names[s];
+	return (s < 0 || s >= drbd_disk_state_names.size ||
+		!drbd_disk_state_names.names[s]) ?
+		"?" : drbd_disk_state_names.names[s];
 }
 
 const char *drbd_set_st_err_str(enum drbd_state_rv err)
 {
-	return err <= SS_AFTER_LAST_ERROR ? "TOO_SMALL" :
-	       err > SS_TWO_PRIMARIES ? "TOO_LARGE"
-			: drbd_state_sw_errors[-err];
+	return (-err < 0 || -err >= drbd_error_messages.size ||
+		!drbd_error_messages.names[-err]) ?
+		"?" : drbd_error_messages.names[-err];
+}
+
+const char *drbd_packet_name(enum drbd_packet cmd)
+{
+	/* too big for the array: 0xfffX */
+	if (cmd == P_INITIAL_META)
+		return "InitialMeta";
+	if (cmd == P_INITIAL_DATA)
+		return "InitialData";
+	if (cmd == P_CONNECTION_FEATURES)
+		return "ConnectionFeatures";
+	return (cmd < 0 || cmd >= ARRAY_SIZE(__packet_names) ||
+		!__packet_names[cmd]) ?
+	       "?" : __packet_names[cmd];
 }
