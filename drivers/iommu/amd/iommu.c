@@ -2909,8 +2909,21 @@ static struct iommu_domain blocked_domain = {
 
 static struct protection_domain identity_domain;
 
+static int amd_iommu_identity_attach(struct iommu_domain *dom, struct device *dev,
+				     struct iommu_domain *old)
+{
+	/*
+	 * Don't allow attaching a device to the identity domain if SNP is
+	 * enabled.
+	 */
+	if (amd_iommu_snp_en)
+		return -EINVAL;
+
+	return amd_iommu_attach_device(dom, dev, old);
+}
+
 static const struct iommu_domain_ops identity_domain_ops = {
-	.attach_dev = amd_iommu_attach_device,
+	.attach_dev = amd_iommu_identity_attach,
 };
 
 void amd_iommu_init_identity_domain(void)
@@ -2984,6 +2997,12 @@ static bool amd_iommu_capable(struct device *dev, enum iommu_cap cap)
 		struct amd_iommu *iommu = get_amd_iommu_from_dev(dev);
 
 		return amd_iommu_hd_support(iommu);
+	}
+	case IOMMU_CAP_PCI_ATS_SUPPORTED: {
+		struct iommu_dev_data *dev_data = dev_iommu_priv_get(dev);
+
+		return amd_iommu_iotlb_sup &&
+			 (dev_data->flags & AMD_IOMMU_DEVICE_FLAG_ATS_SUP);
 	}
 	default:
 		break;
