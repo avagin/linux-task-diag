@@ -1326,6 +1326,7 @@ static const struct ib_device_ops bnxt_re_dev_ops = {
 	.owner = THIS_MODULE,
 	.driver_id = RDMA_DRIVER_BNXT_RE,
 	.uverbs_abi_ver = BNXT_RE_ABI_VERSION,
+	.uverbs_robust_udata = true,
 
 	.add_gid = bnxt_re_add_gid,
 	.alloc_hw_port_stats = bnxt_re_ib_alloc_hw_port_stats,
@@ -1334,6 +1335,7 @@ static const struct ib_device_ops bnxt_re_dev_ops = {
 	.alloc_ucontext = bnxt_re_alloc_ucontext,
 	.create_ah = bnxt_re_create_ah,
 	.create_cq = bnxt_re_create_cq,
+	.create_user_cq = bnxt_re_create_user_cq,
 	.create_qp = bnxt_re_create_qp,
 	.create_srq = bnxt_re_create_srq,
 	.create_user_ah = bnxt_re_create_ah,
