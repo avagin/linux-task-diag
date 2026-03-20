@@ -16122,8 +16122,9 @@ MEDIA INPUT INFRASTRUCTURE (V4L/DVB)
 M:	Mauro Carvalho Chehab <mchehab@kernel.org>
 L:	linux-media@vger.kernel.org
 S:	Maintained
+P:	Documentation/driver-api/media/maintainer-entry-profile.rst
 W:	https://linuxtv.org
-Q:	http://patchwork.kernel.org/project/linux-media/list/
+Q:	https://patchwork.linuxtv.org/project/linux-media/list/
 T:	git git://linuxtv.org/media.git
 F:	Documentation/admin-guide/media/
 F:	Documentation/devicetree/bindings/media/
@@ -24563,7 +24564,6 @@ F:	include/uapi/rdma/rdma_user_rxe.h
 
 SOFTLOGIC 6x10 MPEG CODEC
 M:	Bluecherry Maintainers <maintainers@bluecherrydvr.com>
-M:	Andrey Utkin <andrey_utkin@fastmail.com>
 M:	Ismael Luceno <ismael@iodev.co.uk>
 L:	linux-media@vger.kernel.org
 S:	Supported
@@ -25208,15 +25208,6 @@ STARFIRE/DURALAN NETWORK DRIVER
 M:	Ion Badulescu <ionut@badula.org>
 S:	Odd Fixes
 F:	drivers/net/ethernet/adaptec/starfire*
-
-STARFIVE CAMERA SUBSYSTEM DRIVER
-M:	Jack Zhu <jack.zhu@starfivetech.com>
-M:	Changhuang Liang <changhuang.liang@starfivetech.com>
-L:	linux-media@vger.kernel.org
-S:	Maintained
-F:	Documentation/admin-guide/media/starfive_camss.rst
-F:	Documentation/devicetree/bindings/media/starfive,jh7110-camss.yaml
-F:	drivers/staging/media/starfive/camss
 
 STARFIVE CRYPTO DRIVER
 M:	Jia Jie Ho <jiajie.ho@starfivetech.com>
@@ -27007,8 +26998,6 @@ F:	drivers/platform/x86/tuxedo/
 
 TW5864 VIDEO4LINUX DRIVER
 M:	Bluecherry Maintainers <maintainers@bluecherrydvr.com>
-M:	Andrey Utkin <andrey.utkin@corp.bluecherry.net>
-M:	Andrey Utkin <andrey_utkin@fastmail.com>
 L:	linux-media@vger.kernel.org
 S:	Supported
 F:	drivers/media/pci/tw5864/
