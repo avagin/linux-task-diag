@@ -254,7 +254,7 @@ static enum bug_trap_type __report_bug(struct bug_entry *bug, unsigned long buga
 	if (file)
 		pr_crit("kernel BUG at %s:%u!\n", file, line);
 	else
-		pr_crit("Kernel BUG at %pB [verbose debug info unavailable]\n",
+		pr_crit("kernel BUG at %pB [verbose debug info unavailable]\n",
 			(void *)bugaddr);
 
 	return BUG_TRAP_TYPE_BUG;
@@ -263,7 +263,7 @@ static enum bug_trap_type __report_bug(struct bug_entry *bug, unsigned long buga
 enum bug_trap_type report_bug_entry(struct bug_entry *bug, struct pt_regs *regs)
 {
 	enum bug_trap_type ret;
-	bool rcu = false;
+	bool rcu;
 
 	rcu = warn_rcu_enter();
 	ret = __report_bug(bug, bug_addr(bug), regs);
@@ -275,7 +275,7 @@ enum bug_trap_type report_bug_entry(struct bug_entry *bug, struct pt_regs *regs)
 enum bug_trap_type report_bug(unsigned long bugaddr, struct pt_regs *regs)
 {
 	enum bug_trap_type ret;
-	bool rcu = false;
+	bool rcu;
 
 	rcu = warn_rcu_enter();
 	ret = __report_bug(NULL, bugaddr, regs);

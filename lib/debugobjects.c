@@ -22,11 +22,18 @@
 #define ODEBUG_HASH_BITS	14
 #define ODEBUG_HASH_SIZE	(1 << ODEBUG_HASH_BITS)
 
-/* Must be power of two */
+/*
+ * Must be power of two.
+ * Please change Kconfig help text of DEBUG_OBJECTS_POOL_SIZE_SHIFT when
+ * changed.
+ */
 #define ODEBUG_BATCH_SIZE	16
 
+#define ODEBUG_POOL_SHIFT	CONFIG_DEBUG_OBJECTS_POOL_SIZE_SHIFT
+static_assert(ODEBUG_POOL_SHIFT >= 0);
+
 /* Initial values. Must all be a multiple of batch size */
-#define ODEBUG_POOL_SIZE	(64 * ODEBUG_BATCH_SIZE)
+#define ODEBUG_POOL_SIZE	((1 << ODEBUG_POOL_SHIFT) * ODEBUG_BATCH_SIZE)
 #define ODEBUG_POOL_MIN_LEVEL	(ODEBUG_POOL_SIZE / 4)
 
 #define ODEBUG_POOL_PERCPU_SIZE	(8 * ODEBUG_BATCH_SIZE)
@@ -586,6 +593,10 @@ static void debug_objects_oom(void)
 	struct debug_bucket *db = obj_hash;
 	HLIST_HEAD(freelist);
 
+	/*
+	 * Please change Kconfig help text of DEBUG_OBJECTS_POOL_SIZE_SHIFT
+	 * when changed.
+	 */
 	pr_warn("Out of memory. ODEBUG disabled\n");
 
 	for (int i = 0; i < ODEBUG_HASH_SIZE; i++, db++) {
