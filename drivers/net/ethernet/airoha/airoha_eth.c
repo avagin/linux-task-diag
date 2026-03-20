@@ -76,7 +76,7 @@ static void airoha_set_macaddr(struct airoha_gdm_port *port, const u8 *addr)
 	struct airoha_eth *eth = port->qdma->eth;
 	u32 val, reg;
 
-	reg = airhoa_is_lan_gdm_port(port) ? REG_FE_LAN_MAC_H
+	reg = airoha_is_lan_gdm_port(port) ? REG_FE_LAN_MAC_H
 					   : REG_FE_WAN_MAC_H;
 	val = (addr[0] << 16) | (addr[1] << 8) | addr[2];
 	airoha_fe_wr(eth, reg, val);
@@ -1611,6 +1611,7 @@ static int airoha_dev_open(struct net_device *dev)
 	int err, len = ETH_HLEN + dev->mtu + ETH_FCS_LEN;
 	struct airoha_gdm_port *port = netdev_priv(dev);
 	struct airoha_qdma *qdma = port->qdma;
+	u32 pse_port = FE_PSE_PORT_PPE1;
 
 	netif_tx_start_all_queues(dev);
 	err = airoha_set_vip_for_gdm_port(port, true);
@@ -1634,6 +1635,14 @@ static int airoha_dev_open(struct net_device *dev)
 			GLOBAL_CFG_RX_DMA_EN_MASK);
 	atomic_inc(&qdma->users);
 
+	if (port->id == AIROHA_GDM2_IDX &&
+	    airoha_ppe_is_enabled(qdma->eth, 1)) {
+		/* For PPE2 always use secondary cpu port. */
+		pse_port = FE_PSE_PORT_PPE2;
+	}
+	airoha_set_gdm_port_fwd_cfg(qdma->eth, REG_GDM_FWD_CFG(port->id),
+				    pse_port);
+
 	return 0;
 }
 
@@ -1650,6 +1659,9 @@ static int airoha_dev_stop(struct net_device *dev)
 
 	for (i = 0; i < ARRAY_SIZE(qdma->q_tx); i++)
 		netdev_tx_reset_subqueue(dev, i);
+
+	airoha_set_gdm_port_fwd_cfg(qdma->eth, REG_GDM_FWD_CFG(port->id),
+				    FE_PSE_PORT_DROP);
 
 	if (atomic_dec_and_test(&qdma->users)) {
 		airoha_qdma_clear(qdma, REG_QDMA_GLOBAL_CFG,
@@ -1727,12 +1739,14 @@ static int airhoha_set_gdm2_loopback(struct airoha_gdm_port *port)
 	airoha_fe_rmw(eth,
 		      REG_SP_DFT_CPORT(src_port >> fls(SP_CPORT_DFT_MASK)),
 		      SP_CPORT_MASK(val),
-		      FE_PSE_PORT_CDM2 << __ffs(SP_CPORT_MASK(val)));
+		      __field_prep(SP_CPORT_MASK(val), FE_PSE_PORT_CDM2));
 
-	if (port->id != AIROHA_GDM3_IDX && airoha_is_7581(eth))
-		airoha_fe_rmw(eth, REG_SRC_PORT_FC_MAP6,
-			      FC_ID_OF_SRC_PORT24_MASK,
-			      FIELD_PREP(FC_ID_OF_SRC_PORT24_MASK, 2));
+	if (port->id == AIROHA_GDM4_IDX && airoha_is_7581(eth)) {
+		u32 mask = FC_ID_OF_SRC_PORT_MASK(nbq);
+
+		airoha_fe_rmw(eth, REG_SRC_PORT_FC_MAP6, mask,
+			      __field_prep(mask, AIROHA_GDM2_IDX));
+	}
 
 	return 0;
 }
@@ -1740,11 +1754,13 @@ static int airhoha_set_gdm2_loopback(struct airoha_gdm_port *port)
 static int airoha_dev_init(struct net_device *dev)
 {
 	struct airoha_gdm_port *port = netdev_priv(dev);
-	struct airoha_qdma *qdma = port->qdma;
-	struct airoha_eth *eth = qdma->eth;
-	u32 pse_port, fe_cpu_port;
+	struct airoha_eth *eth = port->eth;
+	u32 fe_cpu_port;
 	u8 ppe_id;
 
+	/* QDMA0 is used for lan ports while QDMA1 is used for WAN ports */
+	port->qdma = &eth->qdma[!airoha_is_lan_gdm_port(port)];
+	port->dev->irq = port->qdma->irq_banks[0].irq;
 	airoha_set_macaddr(port, dev->dev_addr);
 
 	switch (port->id) {
@@ -1763,25 +1779,23 @@ static int airoha_dev_init(struct net_device *dev)
 		if (airoha_ppe_is_enabled(eth, 1)) {
 			/* For PPE2 always use secondary cpu port. */
 			fe_cpu_port = FE_PSE_PORT_CDM2;
-			pse_port = FE_PSE_PORT_PPE2;
+			ppe_id = 1;
 			break;
 		}
 		fallthrough;
 	default: {
-		u8 qdma_id = qdma - &eth->qdma[0];
+		u8 qdma_id = port->qdma - &eth->qdma[0];
 
 		/* For PPE1 select cpu port according to the running QDMA. */
 		fe_cpu_port = qdma_id ? FE_PSE_PORT_CDM2 : FE_PSE_PORT_CDM1;
-		pse_port = FE_PSE_PORT_PPE1;
+		ppe_id = 0;
 		break;
 	}
 	}
 
-	airoha_set_gdm_port_fwd_cfg(eth, REG_GDM_FWD_CFG(port->id), pse_port);
-	ppe_id = pse_port == FE_PSE_PORT_PPE2 ? 1 : 0;
 	airoha_fe_rmw(eth, REG_PPE_DFT_CPORT0(ppe_id),
 		      DFT_CPORT_MASK(port->id),
-		      fe_cpu_port << __ffs(DFT_CPORT_MASK(port->id)));
+		      __field_prep(DFT_CPORT_MASK(port->id), fe_cpu_port));
 
 	return 0;
 }
@@ -2138,7 +2152,7 @@ static int airoha_qdma_set_chan_tx_sched(struct airoha_gdm_port *port,
 
 	airoha_qdma_rmw(port->qdma, REG_CHAN_QOS_MODE(channel >> 3),
 			CHAN_QOS_MODE_MASK(channel),
-			mode << __ffs(CHAN_QOS_MODE_MASK(channel)));
+			__field_prep(CHAN_QOS_MODE_MASK(channel), mode));
 
 	return 0;
 }
@@ -2854,11 +2868,10 @@ bool airoha_is_valid_gdm_port(struct airoha_eth *eth,
 }
 
 static int airoha_alloc_gdm_port(struct airoha_eth *eth,
-				 struct device_node *np, int index)
+				 struct device_node *np)
 {
 	const __be32 *id_ptr = of_get_property(np, "reg", NULL);
 	struct airoha_gdm_port *port;
-	struct airoha_qdma *qdma;
 	struct net_device *dev;
 	int err, p;
 	u32 id;
@@ -2889,7 +2902,6 @@ static int airoha_alloc_gdm_port(struct airoha_eth *eth,
 		return -ENOMEM;
 	}
 
-	qdma = &eth->qdma[index % AIROHA_MAX_NUM_QDMA];
 	dev->netdev_ops = &airoha_netdev_ops;
 	dev->ethtool_ops = &airoha_ethtool_ops;
 	dev->max_mtu = AIROHA_MAX_MTU;
@@ -2901,7 +2913,6 @@ static int airoha_alloc_gdm_port(struct airoha_eth *eth,
 	dev->features |= dev->hw_features;
 	dev->vlan_features = dev->hw_features;
 	dev->dev.of_node = np;
-	dev->irq = qdma->irq_banks[0].irq;
 	SET_NETDEV_DEV(dev, eth->dev);
 
 	/* reserve hw queues for HTB offloading */
@@ -2922,7 +2933,7 @@ static int airoha_alloc_gdm_port(struct airoha_eth *eth,
 	port = netdev_priv(dev);
 	u64_stats_init(&port->stats.syncp);
 	spin_lock_init(&port->stats.lock);
-	port->qdma = qdma;
+	port->eth = eth;
 	port->dev = dev;
 	port->id = id;
 	eth->ports[p] = port;
@@ -3022,7 +3033,6 @@ static int airoha_probe(struct platform_device *pdev)
 	for (i = 0; i < ARRAY_SIZE(eth->qdma); i++)
 		airoha_qdma_start_napi(&eth->qdma[i]);
 
-	i = 0;
 	for_each_child_of_node(pdev->dev.of_node, np) {
 		if (!of_device_is_compatible(np, "airoha,eth-mac"))
 			continue;
@@ -3030,7 +3040,7 @@ static int airoha_probe(struct platform_device *pdev)
 		if (!of_device_is_available(np))
 			continue;
 
-		err = airoha_alloc_gdm_port(eth, np, i++);
+		err = airoha_alloc_gdm_port(eth, np);
 		if (err) {
 			of_node_put(np);
 			goto error_napi_stop;
