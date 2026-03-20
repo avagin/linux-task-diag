@@ -121,7 +121,7 @@ static int gmc_v12_1_process_interrupt(struct amdgpu_device *adev,
 
 	if (entry->src_id == UTCL2_1_0__SRCID__RETRY) {
 		retry_fault = true;
-		write_fault = !!(entry->src_data[1] & 0x200000);
+		write_fault = !!(entry->src_data[1] & AMDGPU_GMC121_FAULT_SOURCE_DATA_WRITE);
 	}
 
 	if (entry->client_id == SOC_V1_0_IH_CLIENTID_VMC) {
@@ -345,9 +345,7 @@ static void gmc_v12_1_flush_gpu_tlb(struct amdgpu_device *adev, uint32_t vmid,
 		return;
 	}
 
-	mutex_lock(&adev->mman.gtt_window_lock);
 	gmc_v12_1_flush_vm_hub(adev, vmid, vmhub, 0);
-	mutex_unlock(&adev->mman.gtt_window_lock);
 	return;
 }
 

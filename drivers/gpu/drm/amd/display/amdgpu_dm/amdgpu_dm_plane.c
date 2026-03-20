@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 /*
- * Copyright 2022 Advanced Micro Devices, Inc.
+ * Copyright 2022-2026 Advanced Micro Devices, Inc.
  *
  * Permission is hereby granted, free of charge, to any person obtaining a
  * copy of this software and associated documentation files (the "Software"),
@@ -62,6 +62,9 @@ static const uint32_t rgb_formats[] = {
 	DRM_FORMAT_XBGR8888,
 	DRM_FORMAT_ABGR8888,
 	DRM_FORMAT_RGB565,
+	DRM_FORMAT_NV21,
+	DRM_FORMAT_NV12,
+	DRM_FORMAT_P010
 };
 
 static const uint32_t overlay_formats[] = {
@@ -759,6 +762,7 @@ static int amdgpu_dm_plane_get_plane_modifiers(struct amdgpu_device *adev, unsig
 	case AMDGPU_FAMILY_GC_11_0_0:
 	case AMDGPU_FAMILY_GC_11_0_1:
 	case AMDGPU_FAMILY_GC_11_5_0:
+	case AMDGPU_FAMILY_GC_11_5_4:
 		amdgpu_dm_plane_add_gfx11_modifiers(adev, mods, &size, &capacity);
 		break;
 	case AMDGPU_FAMILY_GC_12_0_0:
@@ -1907,7 +1911,8 @@ int amdgpu_dm_plane_init(struct amdgpu_display_manager *dm,
 		drm_plane_create_zpos_immutable_property(plane, 255);
 	}
 
-	if (plane->type == DRM_PLANE_TYPE_PRIMARY &&
+	if ((plane->type == DRM_PLANE_TYPE_PRIMARY ||
+	     plane->type == DRM_PLANE_TYPE_OVERLAY) &&
 	    plane_cap &&
 	    (plane_cap->pixel_format_support.nv12 ||
 	     plane_cap->pixel_format_support.p010)) {
