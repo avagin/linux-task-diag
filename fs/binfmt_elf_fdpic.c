@@ -508,6 +508,7 @@ static int create_elf_fdpic_tables(struct linux_binprm *bprm,
 	unsigned long flags = 0;
 	int ei_index;
 	elf_addr_t *elf_info;
+	bool user_hwcap = mm_flags_test(MMF_USER_HWCAP, mm);
 
 #ifdef CONFIG_MMU
 	/* In some cases (e.g. Hyper-Threading), we want to avoid L1 evictions
@@ -595,6 +596,12 @@ static int create_elf_fdpic_tables(struct linux_binprm *bprm,
 #ifdef ELF_HWCAP2
 	nitems++;
 #endif
+#ifdef ELF_HWCAP3
+	nitems++;
+#endif
+#ifdef ELF_HWCAP4
+	nitems++;
+#endif
 
 	csp = sp;
 	sp -= nitems * 2 * sizeof(unsigned long);
@@ -623,15 +630,19 @@ static int create_elf_fdpic_tables(struct linux_binprm *bprm,
 	 */
 	ARCH_DLINFO;
 #endif
-	NEW_AUX_ENT(AT_HWCAP,	ELF_HWCAP);
+	NEW_AUX_ENT(AT_HWCAP,	user_hwcap ?
+				(bprm->hwcap & ELF_HWCAP) : ELF_HWCAP);
 #ifdef ELF_HWCAP2
-	NEW_AUX_ENT(AT_HWCAP2,	ELF_HWCAP2);
+	NEW_AUX_ENT(AT_HWCAP2,	user_hwcap ?
+				(bprm->hwcap2 & ELF_HWCAP2) : ELF_HWCAP2);
 #endif
 #ifdef ELF_HWCAP3
-	NEW_AUX_ENT(AT_HWCAP3,	ELF_HWCAP3);
+	NEW_AUX_ENT(AT_HWCAP3,	user_hwcap ?
+				(bprm->hwcap3 & ELF_HWCAP3) : ELF_HWCAP3);
 #endif
 #ifdef ELF_HWCAP4
-	NEW_AUX_ENT(AT_HWCAP4,	ELF_HWCAP4);
+	NEW_AUX_ENT(AT_HWCAP4,	user_hwcap ?
+				(bprm->hwcap4 & ELF_HWCAP4) : ELF_HWCAP4);
 #endif
 	NEW_AUX_ENT(AT_PAGESZ,	PAGE_SIZE);
 	NEW_AUX_ENT(AT_CLKTCK,	CLOCKS_PER_SEC);
@@ -761,7 +772,7 @@ static int elf_fdpic_map_file(struct elf_fdpic_params *params,
 	if (nloads == 0)
 		return -ELIBBAD;
 
-	loadmap = kzalloc(struct_size(loadmap, segs, nloads), GFP_KERNEL);
+	loadmap = kzalloc_flex(*loadmap, segs, nloads);
 	if (!loadmap)
 		return -ENOMEM;
 
@@ -1391,7 +1402,7 @@ static struct elf_thread_status *elf_dump_thread_status(long signr, struct task_
 	struct elf_thread_status *t;
 	int i, ret;
 
-	t = kzalloc(sizeof(struct elf_thread_status), GFP_KERNEL);
+	t = kzalloc_obj(struct elf_thread_status);
 	if (!t)
 		return t;
 
@@ -1486,10 +1497,10 @@ static int elf_fdpic_core_dump(struct coredump_params *cprm)
 	struct elf_thread_status *tmp;
 
 	/* alloc memory for large data structures: too large to be on stack */
-	elf = kmalloc(sizeof(*elf), GFP_KERNEL);
+	elf = kmalloc_obj(*elf);
 	if (!elf)
 		goto end_coredump;
-	psinfo = kmalloc(sizeof(*psinfo), GFP_KERNEL);
+	psinfo = kmalloc_obj(*psinfo);
 	if (!psinfo)
 		goto end_coredump;
 
@@ -1547,7 +1558,7 @@ static int elf_fdpic_core_dump(struct coredump_params *cprm)
 	offset += segs * sizeof(struct elf_phdr);	/* Program headers */
 
 	/* Write notes phdr entry */
-	phdr4note = kmalloc(sizeof(*phdr4note), GFP_KERNEL);
+	phdr4note = kmalloc_obj(*phdr4note);
 	if (!phdr4note)
 		goto end_coredump;
 
@@ -1562,7 +1573,7 @@ static int elf_fdpic_core_dump(struct coredump_params *cprm)
 	e_shoff = offset;
 
 	if (e_phnum == PN_XNUM) {
-		shdr4extnum = kmalloc(sizeof(*shdr4extnum), GFP_KERNEL);
+		shdr4extnum = kmalloc_obj(*shdr4extnum);
 		if (!shdr4extnum)
 			goto end_coredump;
 		fill_extnum_info(elf, shdr4extnum, e_shoff, segs);

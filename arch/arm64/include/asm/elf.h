@@ -133,7 +133,7 @@
 #define ELF_ET_DYN_BASE		(2 * DEFAULT_MAP_WINDOW_64 / 3)
 #endif /* CONFIG_ARM64_FORCE_52BIT */
 
-#ifndef __ASSEMBLY__
+#ifndef __ASSEMBLER__
 
 #include <uapi/linux/elf.h>
 #include <linux/bug.h>
@@ -160,7 +160,10 @@ typedef struct user_fpsimd_state elf_fpregset_t;
 
 #define SET_PERSONALITY(ex)						\
 ({									\
-	clear_thread_flag(TIF_32BIT);					\
+	if (test_thread_flag(TIF_32BIT)) {				\
+		mm_flags_clear(MMF_USER_HWCAP, current->mm);		\
+		clear_thread_flag(TIF_32BIT);				\
+	}								\
 	current->personality &= ~READ_IMPLIES_EXEC;			\
 })
 
@@ -223,8 +226,11 @@ int compat_elf_check_arch(const struct elf32_hdr *);
  */
 #define COMPAT_SET_PERSONALITY(ex)					\
 ({									\
-	set_thread_flag(TIF_32BIT);					\
- })
+	if (!test_thread_flag(TIF_32BIT)) {				\
+		mm_flags_clear(MMF_USER_HWCAP, current->mm);		\
+		set_thread_flag(TIF_32BIT);				\
+	}								\
+})
 #ifdef CONFIG_COMPAT_VDSO
 #define COMPAT_ARCH_DLINFO						\
 do {									\
@@ -293,6 +299,6 @@ static inline int arch_check_elf(void *ehdr, bool has_interp,
 	return 0;
 }
 
-#endif /* !__ASSEMBLY__ */
+#endif /* !__ASSEMBLER__ */
 
 #endif

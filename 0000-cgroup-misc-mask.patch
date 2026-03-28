@@ -1,0 +1,78 @@
+Subject: [PATCH 0/4 v5] exec: inherit HWCAPs from the parent process
+
+This patch series introduces a mechanism to inherit hardware capabilities
+(AT_HWCAP, AT_HWCAP2, etc.) from a parent process when they have been
+modified via prctl.
+
+To support C/R operations (snapshots, live migration) in heterogeneous
+clusters, we must ensure that processes utilize CPU features available
+on all potential target nodes. To solve this, we need to advertise a
+common feature set across the cluster.
+
+Initially, a cgroup-based approach was considered, but it was decided
+that inheriting HWCAPs from a parent process that has set its own
+auxiliary vector via prctl is a simpler and more flexible solution.
+
+This implementation adds a new mm flag MMF_USER_HWCAP, which is set when the
+auxiliary vector is modified via prctl(PR_SET_MM_AUXV). When execve() is
+called, if the current process has MMF_USER_HWCAP set, the HWCAP values are
+extracted from the current auxiliary vector and inherited by the new process.
+
+The first patch fixes AUXV size calculation for ELF_HWCAP3 and ELF_HWCAP4
+in binfmt_elf_fdpic and updates AT_VECTOR_SIZE_BASE.
+
+The second patch implements the core inheritance logic in execve().
+
+The third patch adds a selftest to verify that HWCAPs are correctly
+inherited across execve().
+
+v5:
+ -  Fix reading of HWCAPs from auxiliary vectors of compat processes.
+ -  Defer HWCAP masking until ELF table creation (create_elf_tables)
+    to handle compat process correctly.
+ -  arm64: Disable HWCAP inheritance on architecture switch (e.g.,
+    AArch64 to AArch32) by clearing MMF_USER_HWCAP, as HWCAP bits have
+    completely different meanings across these architectures.
+
+v4: minor fixes based on feedback from the previous version.
+v3: synchronize saved_auxv access with arg_lock
+
+v1: https://lkml.org/lkml/2025/12/5/65
+v2: https://lkml.org/lkml/2026/1/8/219
+v3: https://lkml.org/lkml/2026/2/9/1233
+v4: https://lkml.org/lkml/2026/2/17/963
+
+Cc: Andrew Morton <akpm@linux-foundation.org>
+Cc: Chen Ridong <chenridong@huawei.com>
+Cc: Christian Brauner <brauner@kernel.org>
+Cc: David Hildenbrand <david@kernel.org>
+Cc: Eric Biederman <ebiederm@xmission.com>
+Cc: Kees Cook <kees@kernel.org>
+Cc: Lorenzo Stoakes <lorenzo.stoakes@oracle.com>
+Cc: Michal Koutny <mkoutny@suse.com>
+Cc: Cyrill Gorcunov <gorcunov@gmail.com>
+
+Andrei Vagin (4):
+  exec: inherit HWCAPs from the parent process
+  arm64: elf: clear MMF_USER_HWCAP on architecture switch
+  mm: synchronize saved_auxv access with arg_lock
+  selftests/exec: add test for HWCAP inheritance
+
+ arch/arm64/include/asm/elf.h                 |  12 ++-
+ fs/binfmt_elf.c                              |  13 ++-
+ fs/binfmt_elf_fdpic.c                        |  13 ++-
+ fs/exec.c                                    |  54 ++++++++++
+ fs/proc/base.c                               |  12 ++-
+ include/linux/binfmts.h                      |  11 ++
+ include/linux/mm_types.h                     |   3 +-
+ kernel/fork.c                                |   8 ++
+ kernel/sys.c                                 |  30 +++---
+ tools/testing/selftests/exec/.gitignore      |   1 +
+ tools/testing/selftests/exec/Makefile        |   1 +
+ tools/testing/selftests/exec/hwcap_inherit.c | 105 +++++++++++++++++++
+ 12 files changed, 234 insertions(+), 29 deletions(-)
+ create mode 100644 tools/testing/selftests/exec/hwcap_inherit.c
+
+-- 
+2.53.0.959.g497ff81fa9-goog
+
