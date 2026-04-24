@@ -973,6 +973,14 @@ static __must_check struct vm_area_struct *vma_merge_existing_range(
 	if (err || commit_merge(vmg))
 		goto abort;
 
+	/*
+	 * VM_SOFTDIRTY is excluded from normal flag comparison to allow
+	 * merging in mprotect, but we have to ensure the result is correctly
+	 * marked with it if either side had it.
+	 */
+	if ((vmg->target->vm_flags ^ vmg->vm_flags) & VM_SOFTDIRTY)
+		vm_flags_set(vmg->target, VM_SOFTDIRTY);
+
 	khugepaged_enter_vma(vmg->target, vmg->vm_flags);
 	vmg->state = VMA_MERGE_SUCCESS;
 	return vmg->target;
