@@ -3993,13 +3993,22 @@ int do_tcp_setsockopt(struct sock *sk, int level, int optname,
 			tp->repair = 1;
 			sk->sk_reuse = SK_FORCE_REUSE;
 			tp->repair_queue = TCP_NO_QUEUE;
+
+			/* Disable fast path so that we can freeze the receive
+			 * queue as needed, see tcp_rcv_established().
+			 */
+			tp->pred_flags = 0;
 		} else if (val == TCP_REPAIR_OFF) {
 			tp->repair = 0;
 			sk->sk_reuse = SK_NO_REUSE;
 			tcp_send_window_probe(sk);
+
+			tcp_fast_path_check(sk);
 		} else if (val == TCP_REPAIR_OFF_NO_WP) {
 			tp->repair = 0;
 			sk->sk_reuse = SK_NO_REUSE;
+
+			tcp_fast_path_check(sk);
 		} else
 			err = -EINVAL;
 

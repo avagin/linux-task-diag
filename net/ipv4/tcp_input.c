@@ -6451,8 +6451,9 @@ reset:
  *	- Out of order segments arrived.
  *	- Urgent data is expected.
  *	- There is no buffer space left
- *	- Unexpected TCP flags/window values/header lengths are received
- *	  (detected by checking the TCP header against pred_flags)
+ *	- Unexpected TCP flags/window values/header lengths are received, or
+ *	  socket is in repair mode (detected by checking the TCP header against
+ *	  pred_flags)
  *	- Data is sent in both directions. Fast path only supports pure senders
  *	  or pure receivers (this means either the sequence number or the ack
  *	  value must stay constant)
@@ -6629,6 +6630,11 @@ slow_path:
 
 	if (!th->ack && !th->rst && !th->syn) {
 		reason = SKB_DROP_REASON_TCP_FLAGS;
+		goto discard;
+	}
+
+	if (tp->repair) {
+		reason = SKB_DROP_REASON_SOCKET_REPAIR;
 		goto discard;
 	}
 
@@ -7124,6 +7130,11 @@ tcp_rcv_state_process(struct sock *sk, struct sk_buff *skb)
 	struct request_sock *req;
 	int queued = 0;
 	SKB_DR(reason);
+
+	if (tp->repair) {
+		SKB_DR_SET(reason, SOCKET_REPAIR);
+		goto discard;
+	}
 
 	switch (sk->sk_state) {
 	case TCP_CLOSE:
