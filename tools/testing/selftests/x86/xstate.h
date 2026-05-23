@@ -3,6 +3,8 @@
 #define __SELFTESTS_X86_XSTATE_H
 
 #include <stdint.h>
+#include <stdlib.h>
+#include <string.h>
 
 #include "kselftest.h"
 
@@ -160,6 +162,11 @@ static inline void set_xstatebv(struct xsave_buffer *xbuf, uint64_t bv)
 	*(uint64_t *)(&xbuf->header) = bv;
 }
 
+static inline uint64_t get_xstatebv(struct xsave_buffer *xbuf)
+{
+	return *(uint64_t *)(&xbuf->header);
+}
+
 /* See 'struct _fpx_sw_bytes' at sigcontext.h */
 #define SW_BYTES_OFFSET		464
 /* N.B. The struct's field name varies so read from the offset. */
@@ -173,6 +180,11 @@ static inline struct _fpx_sw_bytes *get_fpx_sw_bytes(void *xbuf)
 static inline uint64_t get_fpx_sw_bytes_features(void *buffer)
 {
 	return *(uint64_t *)(buffer + SW_BYTES_BV_OFFSET);
+}
+
+static inline void set_fpx_sw_bytes_features(void *buffer, uint64_t features)
+{
+	*(uint64_t *)(buffer + SW_BYTES_BV_OFFSET) = features;
 }
 
 static inline void set_rand_data(struct xstate_info *xstate, struct xsave_buffer *xbuf)
