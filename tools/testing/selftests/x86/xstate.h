@@ -3,6 +3,8 @@
 #define __SELFTESTS_X86_XSTATE_H
 
 #include <stdint.h>
+#include <stdlib.h>
+#include <string.h>
 
 #include "kselftest.h"
 
@@ -158,6 +160,11 @@ static inline void set_xstatebv(struct xsave_buffer *xbuf, uint64_t bv)
 {
 	/* XSTATE_BV is at the beginning of the header: */
 	*(uint64_t *)(&xbuf->header) = bv;
+}
+
+static inline uint64_t get_xstatebv(struct xsave_buffer *xbuf)
+{
+	return *(uint64_t *)(&xbuf->header);
 }
 
 /* See 'struct _fpx_sw_bytes' at sigcontext.h */
