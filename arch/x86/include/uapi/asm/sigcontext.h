@@ -31,8 +31,17 @@
  * If sw_reserved.magic1 == FP_XSTATE_MAGIC1 then there's a
  * sw_reserved.extended_size bytes large extended context area present. (The
  * last 32-bit word of this extended area (at the
- * fpstate+extended_size-FP_XSTATE_MAGIC2_SIZE address) is set to
- * FP_XSTATE_MAGIC2 so that you can sanity check your size calculations.)
+ * fpstate+xstate_size address) is set to FP_XSTATE_MAGIC2 so that you
+ * can sanity check your size calculations.)
+ *
+ * The xstate_size field indicates the actual size of the xstate context
+ * (including the fxregs_state and xstate_header). This size is used to
+ * locate FP_XSTATE_MAGIC2. This makes the signal frame self-describing
+ * and portable: a signal frame created on a machine with a certain set
+ * of xstate features can be restored on a machine with a different (larger)
+ * set of features, as long as the latter supports all features present in
+ * the frame. Note that this portability is generally limited to CPUs of the
+ * same vendor, as different vendors may use different xstate layouts.
  *
  * This extended area typically grows with newer CPUs that have larger and
  * larger XSAVE areas.
