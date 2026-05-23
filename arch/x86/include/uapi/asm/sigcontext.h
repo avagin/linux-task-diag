@@ -34,6 +34,23 @@
  * fpstate+extended_size-FP_XSTATE_MAGIC2_SIZE address) is set to
  * FP_XSTATE_MAGIC2 so that you can sanity check your size calculations.)
  *
+ * The xstate_size field indicates the actual size of the xstate context
+ * (including the 512-byte FXSAVE area and the 64-byte XSAVE header
+ * struct _header). This size is used in conjunction with the pointer to
+ * the xstate context to locate FP_XSTATE_MAGIC2. Note that in 32-bit signal
+ * frames (including 32-bit compat tasks on 64-bit kernels), the fpstate
+ * pointer points to a legacy 112-byte FPU environment (struct _fpstate_32)
+ * that precedes the xstate context, so the xstate context starts at
+ * fpstate + 112. This makes the signal frame self-describing and portable:
+ * a signal frame created on a machine with a certain set of xstate features
+ * can be restored on a machine with a different (larger) set of features,
+ * as long as the destination supports all features present in the frame
+ * and shares matching XSAVE component offsets and sizes for those features.
+ * Note that portability is constrained by the architectural XSAVE layout
+ * and is not guaranteed across different vendors or if space from
+ * deprecated features (e.g. MPX) is repurposed for newer features
+ * (e.g. APX).
+ *
  * This extended area typically grows with newer CPUs that have larger and
  * larger XSAVE areas.
  */

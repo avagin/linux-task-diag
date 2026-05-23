@@ -172,3 +172,19 @@ are extended to control the guest permission:
 
 Note that some VMMs may have already established a set of supported state
 components. These options are not presumed to support any particular VMM.
+
+Signal Frame Portability
+------------------------
+
+The signal frame is designed to be self-describing and portable. This is
+especially important for checkpoint/restore tools like CRIU, which may restore
+a process on a different host than where it was checkpointed. A signal frame
+created on a machine with fewer CPU features can be successfully restored on a
+machine with more CPU features.
+
+Note that signal frame portability is constrained by the architectural XSAVE
+layout. Restoration is supported only if the destination host supports all
+features present in the frame and uses matching component offsets and sizes for
+them. While layout compatibility is generally maintained across CPUs from the
+same vendor, differences can occur across vendors or if the XSAVE space of a
+deprecated feature (e.g. MPX) is repurposed for a newer feature (e.g. APX).
