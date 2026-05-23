@@ -29,16 +29,21 @@ static inline bool check_xstate_in_sigframe(struct fxregs_state __user *fxbuf,
 {
 	int min_xstate_size = sizeof(struct fxregs_state) +
 			      sizeof(struct xstate_header);
-	void __user *fpstate = fxbuf;
+	struct fpstate *fpstate = x86_task_fpu(current)->fpstate;
+	void __user *sig_fpstate = fxbuf;
 	unsigned int magic2;
 
 	if (__copy_from_user(fx_sw, &fxbuf->sw_reserved[0], sizeof(*fx_sw)))
 		return false;
 
+	/* Enforce XFEATURE_MASK_FPSSE when XSAVE is enabled */
+	fx_sw->xfeatures |= XFEATURE_MASK_FPSSE;
+
 	/* Check for the first magic field and other error scenarios. */
 	if (fx_sw->magic1 != FP_XSTATE_MAGIC1 ||
+	    (fx_sw->xfeatures & ~fpstate->user_xfeatures) ||
 	    fx_sw->xstate_size < min_xstate_size ||
-	    fx_sw->xstate_size > x86_task_fpu(current)->fpstate->user_size ||
+	    fx_sw->xstate_size > fpstate->user_size ||
 	    fx_sw->xstate_size > fx_sw->extended_size)
 		goto setfx;
 
@@ -48,8 +53,16 @@ static inline bool check_xstate_in_sigframe(struct fxregs_state __user *fxbuf,
 	 * fpstate layout with out copying the extended state information
 	 * in the memory layout.
 	 */
-	if (__get_user(magic2, (__u32 __user *)(fpstate + fx_sw->xstate_size)))
+	if (__get_user(magic2, (__u32 __user *)(sig_fpstate + fx_sw->xstate_size)))
 		return false;
+
+	if (fx_sw->xstate_size != fpstate->user_size) {
+		unsigned int calculated_size;
+
+		calculated_size = xstate_calculate_size(fx_sw->xfeatures, false);
+		if (fx_sw->xstate_size < calculated_size)
+			goto setfx;
+	}
 
 	if (likely(magic2 == FP_XSTATE_MAGIC2))
 		return true;
@@ -266,7 +279,8 @@ static int __restore_fpregs_from_user(void __user *buf, u64 ufeatures,
  * Attempt to restore the FPU registers directly from user memory.
  * Pagefaults are handled and any errors returned are fatal.
  */
-static bool restore_fpregs_from_user(void __user *buf, u64 xrestore, bool fx_only)
+static bool restore_fpregs_from_user(void __user *buf, u64 xrestore,
+				     bool fx_only, size_t xstate_size)
 {
 	struct fpu *fpu = x86_task_fpu(current);
 	int ret;
@@ -302,7 +316,7 @@ retry:
 		if (ret != X86_TRAP_PF)
 			return false;
 
-		if (!fault_in_readable(buf, fpu->fpstate->user_size))
+		if (!fault_in_readable(buf, xstate_size))
 			goto retry;
 		return false;
 	}
@@ -333,6 +347,7 @@ static bool __fpu_restore_sig(void __user *buf, void __user *buf_fx,
 	bool success, fx_only = false;
 	union fpregs_state *fpregs;
 	u64 user_xfeatures = 0;
+	size_t xstate_size;
 
 	if (use_xsave()) {
 		struct _fpx_sw_bytes fx_sw_user;
@@ -342,13 +357,15 @@ static bool __fpu_restore_sig(void __user *buf, void __user *buf_fx,
 
 		fx_only = !fx_sw_user.magic1;
 		user_xfeatures = fx_sw_user.xfeatures;
+		xstate_size = fx_sw_user.xstate_size;
 	} else {
 		user_xfeatures = XFEATURE_MASK_FPSSE;
+		xstate_size = sizeof(struct fxregs_state);
 	}
 
 	if (likely(!ia32_fxstate)) {
 		/* Restore the FPU registers directly from user memory. */
-		return restore_fpregs_from_user(buf_fx, user_xfeatures, fx_only);
+		return restore_fpregs_from_user(buf_fx, user_xfeatures, fx_only, xstate_size);
 	}
 
 	/*
