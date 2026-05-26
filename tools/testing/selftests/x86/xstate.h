@@ -182,6 +182,11 @@ static inline uint64_t get_fpx_sw_bytes_features(void *buffer)
 	return *(uint64_t *)(buffer + SW_BYTES_BV_OFFSET);
 }
 
+static inline void set_fpx_sw_bytes_features(void *buffer, uint64_t features)
+{
+	*(uint64_t *)(buffer + SW_BYTES_BV_OFFSET) = features;
+}
+
 static inline void set_rand_data(struct xstate_info *xstate, struct xsave_buffer *xbuf)
 {
 	int *ptr = (int *)&xbuf->bytes[xstate->xbuf_offset];
