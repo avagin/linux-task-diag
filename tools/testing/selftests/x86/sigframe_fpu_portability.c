@@ -12,19 +12,24 @@
 #include <sys/syscall.h>
 #include <asm/prctl.h>
 #include <stddef.h>
+#include <setjmp.h>
 
 #include "helpers.h"
 #include "xstate.h"
 
 /*
- * This test verifies the FPU portability of the signal frame.
- * It verifies that the kernel correctly restores the xstate context even
- * if the frame size has been manually reduced (shrunk), as long as the
- * FP_XSTATE_MAGIC2 marker is correctly placed.
+ * This test verifies the FPU portability and consistency of the signal frame.
+ *
+ * - test_shrunk_xstate_size:
+ *   Verifies that the kernel restores state from a frame with xstate_size
+ *   shrunk to only include active features.
+ *
+ * - test_insufficient_xstate_size:
+ *   Verifies that the kernel rejects a frame if xstate_size is too small for
+ *   the features enabled in xfeatures.
  */
 
 #define SIGFRAME_XSTATE_HDR_OFFSET	512
-
 #define XSTATE_SSE_ONLY_SIZE	(SIGFRAME_XSTATE_HDR_OFFSET + XSAVE_HDR_SIZE)
 #define XFEATURE_MASK_FPSSE	((1 << XFEATURE_FP) | (1 << XFEATURE_SSE))
 
@@ -148,15 +153,66 @@ static void test_shrunk_xstate_size(void)
 	clearhandler(SIGUSR1);
 }
 
+static sigjmp_buf segv_jmpbuf;
+
+static void handle_segv(int sig, siginfo_t *si, void *ucp)
+{
+	siglongjmp(segv_jmpbuf, 1);
+}
+
+static void handle_insufficient_xstate_size(int sig, siginfo_t *si, void *ucp)
+{
+	ucontext_t *uc = ucp;
+	void *fp = uc->uc_mcontext.fpregs;
+	struct _fpx_sw_bytes *sw = get_fpx_sw_bytes(fp);
+
+	/* The origin frame contains an AVX state. */
+	sw->xstate_size = XSTATE_SSE_ONLY_SIZE;
+
+	*(uint32_t *)(fp + sw->xstate_size) = FP_XSTATE_MAGIC2;
+}
+
+static void test_insufficient_xstate_size(void)
+{
+	uint64_t v[4] = {0, 0, 0, 0};
+
+	sig_err_buf[0] = 0;
+	sethandler(SIGUSR1, handle_insufficient_xstate_size, 0);
+	sethandler(SIGSEGV, handle_segv, 0);
+
+	v[0] = 0x1111111111111111ULL;
+	v[1] = 0x2222222222222222ULL;
+	v[2] = 0x3333333333333333ULL;
+	v[3] = 0x4444444444444444ULL;
+	write_ymm0(v);
+
+	if (sigsetjmp(segv_jmpbuf, 1) == 0) {
+		raise(SIGUSR1);
+		sig_print("Inconsistent size was NOT rejected\n");
+	}
+
+	clearhandler(SIGUSR1);
+	clearhandler(SIGSEGV);
+
+	if (sig_err_buf[0])
+		ksft_test_result_fail("%s\n", sig_err_buf);
+	else
+		ksft_test_result_pass("Inconsistent size correctly rejected\n");
+
+	clearhandler(SIGUSR1);
+	clearhandler(SIGSEGV);
+}
 
 int main(void)
 {
 	ksft_print_header();
-	ksft_set_plan(1);
+	ksft_set_plan(2);
 
 	check_avx_support();
 
 	test_shrunk_xstate_size();
+	test_insufficient_xstate_size();
+
 	ksft_finished();
 	return 0;
 }
