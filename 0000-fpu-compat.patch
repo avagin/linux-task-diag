@@ -1,0 +1,56 @@
+From 6e3908c25b1ae3d5598d9c7ccdf789269fdda150 Mon Sep 17 00:00:00 2001
+From: Andrei Vagin <avagin@google.com>
+Date: Thu, 4 Jun 2026 16:34:14 +0000
+Subject: [PATCH v2 0/4] x86/fpu: Restore and reinforce signal frame portability
+
+
+The x86 signal frame is designed to be self-describing. The xstate_size
+field in the software-reserved bytes indicates the actual size of the
+xstate context and is used by the kernel to locate the FP_XSTATE_MAGIC2
+marker during signal return.
+
+This design is required to provide portability of signal frames across
+different machines. For example, a process checkpointed on a system with
+fewer xstate features and restored on a system with more features will
+have a signal frame on its stack that is smaller than the destination
+host's default. By relying on the frame's internal xstate_size, the
+kernel can correctly validate and restore such frames.
+
+This series addresses a regression introduced in commit dc8aa31a7ac2
+("x86/fpu: Refine and simplify the magic number check during signal
+return").
+
+v2: Address sashiko comments.
+    44eeff9bc467 ("Revert "x86/fpu: Refine and simplify the magic number
+    check during signal return"") has been merged.
+
+Cc: Thomas Gleixner <tglx@kernel.org>
+Cc: Ingo Molnar <mingo@redhat.com>
+Cc: Borislav Petkov <bp@alien8.de>
+Cc: Dave Hansen <dave.hansen@linux.intel.com>
+Cc: "H. Peter Anvin" <hpa@zytor.com>
+Cc: "Chang S. Bae" <chang.seok.bae@intel.com>
+
+Andrei Vagin (5):
+  Revert "x86/fpu: Refine and simplify the magic number check during
+    signal return"
+  x86/fpu: Document signal frame portability
+  selftests/x86: Add a test for signal frame portability
+  x86/fpu: Add consistency check between xstate_size and xfeatures
+  selftests/x86: Add a consistency test for signal frames
+
+ Documentation/arch/x86/xstate.rst             |  14 +-
+ arch/x86/include/uapi/asm/sigcontext.h        |  10 +
+ arch/x86/kernel/fpu/signal.c                  |  29 ++-
+ arch/x86/kernel/fpu/xstate.c                  |   2 +-
+ arch/x86/kernel/fpu/xstate.h                  |   2 +
+ tools/testing/selftests/x86/Makefile          |   5 +-
+ .../selftests/x86/sigframe_portability.c      | 205 ++++++++++++++++++
+ tools/testing/selftests/x86/xstate.c          |   5 -
+ tools/testing/selftests/x86/xstate.h          |  12 +
+ 9 files changed, 269 insertions(+), 15 deletions(-)
+ create mode 100644 tools/testing/selftests/x86/sigframe_portability.c
+
+-- 
+2.54.0.746.g67dd491aae-goog
+
