@@ -17,13 +17,14 @@
 #include "xstate.h"
 
 /*
- * This test verifies the portability of the signal frame.
- * It simulates a scenario where a signal frame is created on a system with
- * fewer xstate features and restored on a system with more features.
+ * This test verifies the portability and consistency of the signal frame.
+ * Portability: A frame created on a system with fewer features can be
+ *              restored on a system with more features.
+ * Consistency: The kernel rejects frames where xstate_size is insufficient
+ *              for the features enabled in xfeatures.
  */
 
 #define SIGFRAME_XSTATE_HDR_OFFSET	512
-
 #define XSTATE_SSE_ONLY_SIZE	(SIGFRAME_XSTATE_HDR_OFFSET + XSAVE_HDR_SIZE)
 #define XFEATURE_MASK_FPSSE	((1 << XFEATURE_FP) | (1 << XFEATURE_SSE))
 
@@ -83,8 +84,7 @@ static void write_ymm0(uint64_t *v)
 	asm volatile ("vmovdqu %0, %%ymm0" : : "m"  (*(char (*)[32])v));
 }
 
-
-static void handle_signal(int sig, siginfo_t *si, void *ucp)
+static void handle_portability(int sig, siginfo_t *si, void *ucp)
 {
 	ucontext_t *uc = ucp;
 	void *fp = uc->uc_mcontext.fpregs;
@@ -119,16 +119,12 @@ static void handle_signal(int sig, siginfo_t *si, void *ucp)
 		memset(fp + sw->xstate_size + 4, 0, sw->extended_size - sw->xstate_size - 4);
 }
 
-int main(void)
+static void test_portability(void)
 {
 	uint64_t v[4] = {0, 0, 0, 0};
 
-	ksft_print_header();
-	ksft_set_plan(1);
-
-	check_avx_support();
-
-	sethandler(SIGUSR1, handle_signal, 0);
+	sig_err_buf[0] = 0;
+	sethandler(SIGUSR1, handle_portability, 0);
 
 	v[0] = 0x1111111111111111ULL;
 	v[1] = 0x2222222222222222ULL;
@@ -143,13 +139,66 @@ int main(void)
 	if (sig_err_buf[0])
 		ksft_test_result_fail("%s\n", sig_err_buf);
 	else if (v[2] == TEST_YMMH_VAL && v[3] == (TEST_YMMH_VAL + 1))
-		ksft_test_result_pass("YMM state restored correctly\n");
+		ksft_test_result_pass("YMM state restored correctly from shrunk frame\n");
 	else
 		ksft_test_result_fail(
 				"Got upper bits: 0x%lx 0x%lx (expected %lx %lx)\n",
 			       v[2], v[3], TEST_YMMH_VAL, TEST_YMMH_VAL + 1);
 
 	clearhandler(SIGUSR1);
+}
+
+static void handle_consistency(int sig, siginfo_t *si, void *ucp)
+{
+	ucontext_t *uc = ucp;
+	void *fp = uc->uc_mcontext.fpregs;
+	struct _fpx_sw_bytes *sw = get_fpx_sw_bytes(fp);
+
+	/* The origin frame contains an AVX state. */
+	sw->xstate_size = XSTATE_SSE_ONLY_SIZE;
+
+	*(uint32_t *)(fp + sw->xstate_size) = FP_XSTATE_MAGIC2;
+}
+
+static void test_consistency(void)
+{
+	uint64_t v[4] = {0, 0, 0, 0};
+
+	sig_err_buf[0] = 0;
+	sethandler(SIGUSR2, handle_consistency, 0);
+
+	v[0] = 0x1111111111111111ULL;
+	v[1] = 0x2222222222222222ULL;
+	v[2] = 0x3333333333333333ULL;
+	v[3] = 0x4444444444444444ULL;
+	write_ymm0(v);
+
+	raise(SIGUSR2);
+	v[0] = v[1] = v[2] = v[3] = 0;
+	read_ymm0(v);
+
+	/*
+	 * When inconsistent, the kernel should have fallen back to
+	 * FX-only mode, so YMM upper bits should be zero (init state).
+	 */
+	if (v[2] == 0 && v[3] == 0)
+		ksft_test_result_pass("Inconsistent size correctly rejected\n");
+	else
+		ksft_test_result_fail("Inconsistent size was NOT rejected: 0x%lx 0x%lx\n",
+				      v[2], v[3]);
+
+	clearhandler(SIGUSR2);
+}
+
+int main(void)
+{
+	ksft_print_header();
+	ksft_set_plan(2);
+
+	check_avx_support();
+
+	test_portability();
+	test_consistency();
 
 	ksft_finished();
 	return 0;
