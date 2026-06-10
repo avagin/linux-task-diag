@@ -264,6 +264,9 @@ static int __restore_fpregs_from_user(void __user *buf, u64 task_xfeatures,
 	}
 }
 
+static bool restore_fpregs_from_user_compat(void __user *buf_f, void __user *buf_fx,
+					    u64 xrestore_mask, bool fx_only);
+
 /*
  * Attempt to restore the FPU registers directly from user memory.
  * Pagefaults are handled and any errors returned are fatal.
@@ -324,14 +327,9 @@ retry:
 	return true;
 }
 
-static bool __fpu_restore_sig(void __user *buf_f, void __user *buf_fx,
-			      bool ia32_fxstate)
+static bool __fpu_restore_sig(void __user *buf_f, void __user *buf_fx)
 {
-	struct task_struct *tsk = current;
-	struct fpu *fpu = x86_task_fpu(tsk);
-	struct user_i387_ia32_struct env;
-	bool success, fx_only = false;
-	union fpregs_state *fpregs;
+	bool fx_only = false;
 	u64 xrestore_mask = 0;
 
 	if (use_xsave()) {
@@ -346,10 +344,32 @@ static bool __fpu_restore_sig(void __user *buf_f, void __user *buf_fx,
 		xrestore_mask = XFEATURE_MASK_FPSSE;
 	}
 
-	if (likely(!ia32_fxstate)) {
+	if (likely(!buf_f)) {
 		/* Restore the FPU registers directly from user memory. */
 		return restore_fpregs_from_user(buf_fx, xrestore_mask, fx_only);
 	}
+
+	return restore_fpregs_from_user_compat(buf_f, buf_fx, xrestore_mask, fx_only);
+}
+
+#if defined(CONFIG_X86_32) || defined(CONFIG_IA32_EMULATION)
+/*
+ * Restore FPU state from a signal frame when a legacy 32-bit FP frame
+ * (buf_f) is present.
+ *
+ * The legacy FP frame duplicates the FP state portion of the FX/XSAVE
+ * frame (buf_fx). For backward compatibility, the legacy FP frame is
+ * treated as the source of truth, and its state is folded into the
+ * FX/XSAVE state before restoring the registers.
+ */
+static bool restore_fpregs_from_user_compat(void __user *buf_f, void __user *buf_fx,
+					    u64 xrestore_mask, bool fx_only)
+{
+	struct task_struct *tsk = current;
+	struct fpu *fpu = x86_task_fpu(tsk);
+	struct user_i387_ia32_struct env;
+	union fpregs_state *fpregs;
+	bool success;
 
 	/*
 	 * Copy the legacy state because the FP portion of the FX frame has
@@ -435,6 +455,13 @@ static bool __fpu_restore_sig(void __user *buf_f, void __user *buf_fx,
 	fpregs_unlock();
 	return success;
 }
+#else
+static bool restore_fpregs_from_user_compat(void __user *buf_f, void __user *buf_fx,
+						   u64 xrestore_mask, bool fx_only)
+{
+	return false;
+}
+#endif
 
 static inline unsigned int xstate_sigframe_size(struct fpstate *fpstate)
 {
@@ -449,8 +476,7 @@ static inline unsigned int xstate_sigframe_size(struct fpstate *fpstate)
 bool fpu__restore_sig(void __user *buf, int ia32_frame)
 {
 	struct fpu *fpu = x86_task_fpu(current);
-	void __user *buf_fx = buf;
-	bool ia32_fxstate = false;
+	void __user *buf_fx = buf, *buf_f = NULL;
 	bool success = false;
 	unsigned int size;
 
@@ -471,7 +497,7 @@ bool fpu__restore_sig(void __user *buf, int ia32_frame)
 	if (ia32_frame && use_fxsr()) {
 		buf_fx = buf + sizeof(struct fregs_state);
 		size += sizeof(struct fregs_state);
-		ia32_fxstate = true;
+		buf_f = buf;
 	}
 
 	if (!access_ok(buf, size))
@@ -482,7 +508,7 @@ bool fpu__restore_sig(void __user *buf, int ia32_frame)
 					   sizeof(struct user_i387_ia32_struct),
 					   NULL, buf);
 	} else {
-		success = __fpu_restore_sig(buf, buf_fx, ia32_fxstate);
+		success = __fpu_restore_sig(buf_f, buf_fx);
 	}
 
 out:
