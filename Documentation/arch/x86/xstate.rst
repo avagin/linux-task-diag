@@ -179,8 +179,9 @@ Signal Frame Layout and Portability
 The signal frame is designed to be self-describing and portable. This is
 especially important for checkpoint/restore tools like CRIU, which may restore
 a process on a different host than where it was checkpointed. A signal frame
-created on a machine with fewer CPU features can be successfully restored on a
-machine with more CPU features, but not vice-versa.
+can be successfully restored across machines with different sets of enabled
+CPU features (whether the frame's ``xstate_size`` is smaller or larger than the
+destination host's default), provided all active features are supported.
 
 Signal Frame Software Reserved Bytes
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -222,7 +223,10 @@ Portability Constraints
 
 Signal frame portability is constrained by the architectural XSAVE layout.
 Restoration is supported only if the destination host supports all features
-present in the frame and uses matching component offsets and sizes for them.
+active in the XSAVE header (``XSTATE_BV``) and uses matching component offsets
+and sizes for them. (The frame's ``xstate_size`` and ``_fpx_sw_bytes.xfeatures``
+may exceed the destination host's default if the source host had additional
+features enabled that were not actively used by the task.)
 While layout compatibility is generally maintained across CPUs from the same
 vendor, differences can occur across vendors or if the XSAVE space of a
 deprecated feature (e.g. MPX) is repurposed for a newer feature (e.g. APX).

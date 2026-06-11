@@ -36,11 +36,18 @@ static inline bool check_xstate_in_sigframe(struct fxregs_state __user *buf_fx,
 	if (__copy_from_user(fx_sw, &buf_fx->sw_reserved[0], sizeof(*fx_sw)))
 		return false;
 
-	/* Check for the first magic field and other error scenarios. */
+	/*
+	 * Check for the first magic field and other error scenarios.
+	 *
+	 * fx_sw->xstate_size can exceed fpstate->user_size if the frame was
+	 * saved on a CPU with a larger set of enabled xstate features.
+	 * Reject the buffer below if the XSAVE header contains any active
+	 * features that are not in both fx_sw->xfeatures and user_xfeatures.
+	 */
 	if (fx_sw->magic1 != FP_XSTATE_MAGIC1 ||
 	    fx_sw->xstate_size < min_xstate_size ||
-	    fx_sw->xstate_size > fpstate->user_size ||
-	    fx_sw->extended_size < fx_sw->xstate_size + FP_XSTATE_MAGIC2_SIZE)
+	    fx_sw->xstate_size > fx_sw->extended_size ||
+	    fx_sw->extended_size - fx_sw->xstate_size < FP_XSTATE_MAGIC2_SIZE)
 		goto err_setfx;
 
 	/*
@@ -49,18 +56,32 @@ static inline bool check_xstate_in_sigframe(struct fxregs_state __user *buf_fx,
 	 * fpstate layout with out copying the extended state information
 	 * in the memory layout.
 	 */
-	if (__get_user(magic2, (__u32 __user *)(buf + fx_sw->xstate_size)))
+	if (get_user(magic2, (__u32 __user *)(buf + fx_sw->xstate_size)))
 		return false;
 	if (unlikely(magic2 != FP_XSTATE_MAGIC2))
 		goto err_setfx;
 
 	if (fx_sw->xstate_size != fpstate->user_size ||
 	    fx_sw->xfeatures != fpstate->user_xfeatures) {
+		struct xregs_state __user *xbuf = buf;
+		u64 xstate_bv, xfeatures;
 		unsigned int xsize;
-		u64 xfeatures;
+
+		if (__get_user(xstate_bv, &xbuf->header.xfeatures))
+			return false;
 
 		/* Calculate size of enabled features only. */
 		xfeatures = fx_sw->xfeatures & fpstate->user_xfeatures;
+
+		/*
+		 * Reject XFD-disabled features present in XCR0 that XRSTOR
+		 * would otherwise ignore when masked out of EDX:EAX, as well
+		 * as any other active features not in xfeatures. Concurrent
+		 * user-space changes after this check cannot affect the kernel
+		 * because XRSTOR is masked with xfeatures.
+		 */
+		if (xstate_bv & ~xfeatures)
+			return false;
 
 		xsize = xstate_calculate_size(xfeatures, false);
 		if (fx_sw->xstate_size < xsize)
