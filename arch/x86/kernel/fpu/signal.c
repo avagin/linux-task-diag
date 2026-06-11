@@ -36,12 +36,21 @@ static inline bool check_xstate_in_sigframe(struct fxregs_state __user *buf_fx,
 	if (__copy_from_user(fx_sw, &buf_fx->sw_reserved[0], sizeof(*fx_sw)))
 		return false;
 
-	/* Check for the first magic field and other error scenarios. */
+	/* Check for the first magic field and other error scenarios.
+	 *
+	 * Do not enforce that fx_sw->xstate_size matches the task's
+	 * fpstate->user_size. The frame could be saved on another CPU with a
+	 * different set of xtate features. The actual set of used features is
+	 * defined in the xsave header. If the buffer contains any unsupported
+	 * feature states, it will be rejected.
+	 */
 	if (fx_sw->magic1 != FP_XSTATE_MAGIC1 ||
 	    fx_sw->xstate_size < min_xstate_size ||
-	    fx_sw->xstate_size > fpstate->user_size ||
 	    fx_sw->xstate_size > fx_sw->extended_size ||
 	    fx_sw->extended_size - fx_sw->xstate_size < FP_XSTATE_MAGIC2_SIZE)
+		goto err_setfx;
+
+	if (!access_ok(buf_fx, fx_sw->extended_size))
 		goto err_setfx;
 
 	/*
