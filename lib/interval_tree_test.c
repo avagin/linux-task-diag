@@ -4,6 +4,7 @@
 #include <linux/interval_tree.h>
 #include <linux/prandom.h>
 #include <linux/slab.h>
+#include <linux/printk.h>
 #include <asm/timex.h>
 #include <linux/bitmap.h>
 #include <linux/maple_tree.h>
