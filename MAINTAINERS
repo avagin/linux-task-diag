@@ -297,6 +297,7 @@ F:	include/linux/acpi.h
 F:	include/linux/fwnode.h
 F:	include/linux/fw_table.h
 F:	lib/fw_table.c
+F:	rust/helpers/acpi.c
 F:	rust/kernel/acpi.rs
 F:	tools/power/acpi/
 
@@ -1149,8 +1150,9 @@ F:	Documentation/arch/x86/amd-hfi.rst
 F:	drivers/platform/x86/amd/hfi/
 
 AMD IOMMU (AMD-VI)
-M:	Joerg Roedel <joro@8bytes.org>
+M:	Joerg Roedel (AMD) <joro@8bytes.org>
 R:	Suravee Suthikulpanit <suravee.suthikulpanit@amd.com>
+R:	Vasant Hegde <vasant.hegde@amd.com>
 L:	iommu@lists.linux.dev
 S:	Maintained
 T:	git git://git.kernel.org/pub/scm/linux/kernel/git/iommu/linux.git
@@ -6533,7 +6535,7 @@ F:	include/linux/blk-cgroup.h
 
 CONTROL GROUP - CPUSET
 M:	Waiman Long <longman@redhat.com>
-R:	Chen Ridong <chenridong@huaweicloud.com>
+R:	Ridong Chen <ridong.chen@linux.dev>
 L:	cgroups@vger.kernel.org
 S:	Maintained
 T:	git git://git.kernel.org/pub/scm/linux/kernel/git/tj/cgroup.git
@@ -9914,7 +9916,7 @@ S:	Supported
 F:	Documentation/filesystems/nfs/exporting.rst
 F:	fs/exportfs/
 F:	fs/fhandle.c
-F:	include/linux/exportfs.h
+F:	include/linux/exportfs*.h
 
 FILESYSTEMS [IDMAPPED MOUNTS]
 M:	Christian Brauner <brauner@kernel.org>
@@ -10764,6 +10766,7 @@ GENERIC GPIO I2C MULTIPLEXER DRIVER
 M:	Peter Korsgaard <peter.korsgaard@barco.com>
 L:	linux-i2c@vger.kernel.org
 S:	Supported
+F:	Documentation/devicetree/bindings/i2c/i2c-mux-gpio.yaml
 F:	Documentation/i2c/muxes/i2c-mux-gpio.rst
 F:	drivers/i2c/muxes/i2c-mux-gpio.c
 F:	include/linux/platform_data/i2c-mux-gpio.h
@@ -10828,7 +10831,7 @@ F:	include/linux/generic-radix-tree.h
 F:	lib/generic-radix-tree.c
 
 GENERIC RESISTIVE TOUCHSCREEN ADC DRIVER
-M:	Eugen Hristev <eugen.hristev@microchip.com>
+M:	Eugen Hristev <ehristev@kernel.org>
 L:	linux-input@vger.kernel.org
 S:	Maintained
 F:	drivers/input/touchscreen/resistive-adc-touch.c
@@ -12086,11 +12089,11 @@ F:	Documentation/i2c/busses/i2c-parport.rst
 F:	drivers/i2c/busses/i2c-parport.c
 
 I2C SUBSYSTEM
-M:	Wolfram Sang <wsa+renesas@sang-engineering.com>
+M:	Andi Shyti <andi.shyti@kernel.org>
 L:	linux-i2c@vger.kernel.org
 S:	Maintained
 Q:	https://patchwork.ozlabs.org/project/linux-i2c/list/
-T:	git git://git.kernel.org/pub/scm/linux/kernel/git/wsa/linux.git
+T:	git git://git.kernel.org/pub/scm/linux/kernel/git/andi.shyti/linux.git
 F:	Documentation/i2c/
 F:	drivers/i2c/*
 F:	include/dt-bindings/i2c/i2c.h
@@ -13476,7 +13479,7 @@ F:	include/linux/iommu-dma.h
 F:	include/linux/iova.h
 
 IOMMU SUBSYSTEM
-M:	Joerg Roedel <joro@8bytes.org>
+M:	Joerg Roedel (AMD) <joro@8bytes.org>
 M:	Will Deacon <will@kernel.org>
 R:	Robin Murphy <robin.murphy@arm.com>
 L:	iommu@lists.linux.dev
@@ -13857,7 +13860,7 @@ F:	scripts/Makefile.kcsan
 
 KDUMP
 M:	Andrew Morton <akpm@linux-foundation.org>
-M:	Baoquan He <bhe@redhat.com>
+M:	Baoquan He <baoquan.he@linux.dev>
 M:	Mike Rapoport <rppt@kernel.org>
 M:	Pasha Tatashin <pasha.tatashin@soleen.com>
 M:	Pratyush Yadav <pratyush@kernel.org>
@@ -14176,7 +14179,7 @@ F:	include/linux/kernfs.h
 
 KEXEC
 M:	Andrew Morton <akpm@linux-foundation.org>
-M:	Baoquan He <bhe@redhat.com>
+M:	Baoquan He <baoquan.he@linux.dev>
 M:	Mike Rapoport <rppt@kernel.org>
 M:	Pasha Tatashin <pasha.tatashin@soleen.com>
 M:	Pratyush Yadav <pratyush@kernel.org>
@@ -16499,7 +16502,7 @@ F:	drivers/usb/mtu3/
 
 MEGACHIPS STDPXXXX-GE-B850V3-FW LVDS/DP++ BRIDGES
 M:	Peter Senna Tschudin <peter.senna@gmail.com>
-M:	Ian Ray <ian.ray@ge.com>
+M:	Ian Ray <ian.ray@gehealthcare.com>
 M:	Martyn Welch <martyn.welch@collabora.co.uk>
 S:	Maintained
 F:	Documentation/devicetree/bindings/display/bridge/megachips-stdpxxxx-ge-b850v3-fw.txt
@@ -17029,7 +17032,7 @@ M:	Chris Li <chrisl@kernel.org>
 M:	Kairui Song <kasong@tencent.com>
 R:	Kemeng Shi <shikemeng@huaweicloud.com>
 R:	Nhat Pham <nphamcs@gmail.com>
-R:	Baoquan He <bhe@redhat.com>
+R:	Baoquan He <baoquan.he@linux.dev>
 R:	Barry Song <baohua@kernel.org>
 R:	Youngjun Park <youngjun.park@lge.com>
 L:	linux-mm@kvack.org
@@ -17338,7 +17341,7 @@ F:	Documentation/devicetree/bindings/sound/mikroe,mikroe-proto.txt
 F:	sound/soc/atmel
 
 MICROCHIP CSI2DC DRIVER
-M:	Eugen Hristev <eugen.hristev@microchip.com>
+M:	Eugen Hristev <ehristev@kernel.org>
 L:	linux-media@vger.kernel.org
 S:	Supported
 F:	Documentation/devicetree/bindings/media/microchip,csi2dc.yaml
@@ -17365,7 +17368,7 @@ F:	drivers/i2c/busses/i2c-at91-*.c
 F:	drivers/i2c/busses/i2c-at91.h
 
 MICROCHIP ISC DRIVER
-M:	Eugen Hristev <eugen.hristev@microchip.com>
+M:	Eugen Hristev <ehristev@kernel.org>
 L:	linux-media@vger.kernel.org
 S:	Supported
 F:	Documentation/devicetree/bindings/media/atmel,isc.yaml
@@ -17377,7 +17380,7 @@ F:	drivers/staging/media/deprecated/atmel/atmel-sama*-isc*
 F:	include/linux/atmel-isc-media.h
 
 MICROCHIP ISI DRIVER
-M:	Eugen Hristev <eugen.hristev@microchip.com>
+M:	Eugen Hristev <ehristev@kernel.org>
 L:	linux-media@vger.kernel.org
 S:	Supported
 F:	drivers/media/platform/atmel/atmel-isi.c
@@ -17567,7 +17570,7 @@ F:	Documentation/devicetree/bindings/display/bridge/microchip,sam9x75-lvds.yaml
 F:	drivers/gpu/drm/bridge/microchip-lvds.c
 
 MICROCHIP SAMA5D2-COMPATIBLE ADC DRIVER
-M:	Eugen Hristev <eugen.hristev@microchip.com>
+M:	Eugen Hristev <ehristev@kernel.org>
 L:	linux-iio@vger.kernel.org
 S:	Supported
 F:	Documentation/devicetree/bindings/iio/adc/atmel,sama5d2-adc.yaml
@@ -20541,6 +20544,7 @@ PCI ENDPOINT SUBSYSTEM
 M:	Manivannan Sadhasivam <mani@kernel.org>
 M:	Krzysztof Wilczyński <kwilczynski@kernel.org>
 R:	Kishon Vijay Abraham I <kishon@kernel.org>
+R:	Frank Li <Frank.Li@kernel.org>
 L:	linux-pci@vger.kernel.org
 S:	Supported
 Q:	https://patchwork.kernel.org/project/linux-pci/list/
@@ -23390,6 +23394,10 @@ R:	Andreas Hindborg <a.hindborg@kernel.org>
 R:	Alice Ryhl <aliceryhl@google.com>
 R:	Trevor Gross <tmgross@umich.edu>
 R:	Danilo Krummrich <dakr@kernel.org>
+R:	Daniel Almeida <daniel.almeida@collabora.com>
+R:	Tamir Duberstein <tamird@kernel.org>
+R:	Alexandre Courbot <acourbot@nvidia.com>
+R:	Onur Özkan <work@onurozkan.dev>
 L:	rust-for-linux@vger.kernel.org
 S:	Supported
 W:	https://rust-for-linux.com
@@ -23418,6 +23426,13 @@ S:	Maintained
 T:	git https://github.com/Rust-for-Linux/linux.git alloc-next
 F:	rust/kernel/alloc.rs
 F:	rust/kernel/alloc/
+
+RUST [BITFIELD]
+M:	Alexandre Courbot <acourbot@nvidia.com>
+R:	Yury Norov <yury.norov@gmail.com>
+L:	rust-for-linux@vger.kernel.org
+S:	Maintained
+F:	rust/kernel/bitfield.rs
 
 RUST [INTEROP]
 M:	Joel Fernandes <joelagnelf@nvidia.com>
@@ -24117,7 +24132,7 @@ F:	drivers/mmc/host/sdhci*
 
 SECURE DIGITAL HOST CONTROLLER INTERFACE (SDHCI) MICROCHIP DRIVER
 M:	Aubin Constans <aubin.constans@microchip.com>
-R:	Eugen Hristev <eugen.hristev@collabora.com>
+R:	Eugen Hristev <ehristev@kernel.org>
 L:	linux-mmc@vger.kernel.org
 S:	Supported
 F:	drivers/mmc/host/sdhci-of-at91.c
@@ -25917,7 +25932,6 @@ F:	drivers/media/platform/synopsys/hdmirx/*
 SYNOPSYS DESIGNWARE I2C DRIVER
 M:	Mika Westerberg <mika.westerberg@linux.intel.com>
 R:	Andy Shevchenko <andriy.shevchenko@linux.intel.com>
-R:	Jan Dabros <jsd@semihalf.com>
 L:	linux-i2c@vger.kernel.org
 S:	Supported
 F:	drivers/i2c/busses/i2c-designware-*
