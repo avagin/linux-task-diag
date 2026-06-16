@@ -1248,7 +1248,6 @@ static int panthor_vm_op_ctx_prealloc_pts(struct panthor_vm_op_ctx *op_ctx)
 {
 	u64 size = op_ctx->va.range;
 	u64 va = op_ctx->va.addr;
-	int ret;
 
 	/* L1, L2 and L3 page tables.
 	 * We could optimize L3 allocation by iterating over the sgt and merging
