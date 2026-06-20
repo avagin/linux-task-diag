@@ -18,8 +18,9 @@
 
 #ifndef _LINUX_MQUEUE_H
 #define _LINUX_MQUEUE_H
-
+#include <linux/uio.h>
 #include <linux/types.h>
+#include <asm/compat.h>
 
 #define MQ_PRIO_MAX 	32768
 /* per-uid limit of kernel memory used by mqueue, in bytes */
@@ -31,6 +32,30 @@ struct mq_attr {
 	__kernel_long_t	mq_msgsize;	/* maximum message size			*/
 	__kernel_long_t	mq_curmsgs;	/* number of messages currently queued	*/
 	__kernel_long_t	__reserved[4];	/* ignored for input, zeroed for output */
+};
+
+struct mq_msg_attrs {
+	__kernel_size_t msg_len;
+	unsigned int __user *msg_prio;
+	void __user *msg_ptr;
+};
+
+struct mq_mmsg_attrs {
+	struct iovec __user *msg_attrs_vec;
+	__kernel_size_t vlen;
+	int __user  *ret;
+};
+
+struct compat_msg_attrs {
+	compat_size_t msg_len;
+	compat_uptr_t __user msg_prio;
+	compat_uptr_t __user msg_ptr;
+};
+
+struct compat_mq_mmsg_attrs {
+	compat_uptr_t __user msg_attrs_vec;
+	compat_size_t vlen;
+	compat_uptr_t __user ret;
 };
 
 /*

@@ -392,5 +392,11 @@ COND_SYSCALL(setuid16);
 COND_SYSCALL(rseq);
 COND_SYSCALL(rseq_slice_yield);
 
+/* ipc */
+COND_SYSCALL(mq_recvmmsg);
+COND_SYSCALL_COMPAT(mq_recvmmsg);
+COND_SYSCALL(mq_sendmmsg);
+COND_SYSCALL_COMPAT(mq_sendmmsg);
+
 COND_SYSCALL(uretprobe);
 COND_SYSCALL(uprobe);

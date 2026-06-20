@@ -18,10 +18,10 @@
 #include <linux/aio_abi.h>	/* for aio_context_t */
 #include <linux/uaccess.h>
 #include <linux/unistd.h>
-
 #include <asm/compat.h>
 #include <asm/siginfo.h>
 #include <asm/signal.h>
+#include <linux/mqueue.h>
 
 #ifdef CONFIG_ARCH_HAS_SYSCALL_WRAPPER
 /*
@@ -428,6 +428,8 @@ struct compat_sysctl_args;
 struct compat_kexec_segment;
 struct compat_mq_attr;
 struct compat_msgbuf;
+struct compat_msg_attrs;
+struct compat_mq_mmsg_attrs;
 
 void copy_siginfo_to_external32(struct compat_siginfo *to,
 		const struct kernel_siginfo *from);
@@ -805,8 +807,12 @@ asmlinkage long compat_sys_pwritev64v2(unsigned long fd,
 		const struct iovec __user *vec,
 		unsigned long vlen, loff_t pos, rwf_t flags);
 #endif
-
-
+asmlinkage long compat_sys_mq_sendmmsg(mqd_t mqdes, struct compat_mq_mmsg_attrs __user *attrs,
+									  unsigned int attrs_len, unsigned int flags, unsigned long start_index,
+									  const struct __kernel_timespec __user *abs_timeout);
+asmlinkage long compat_sys_mq_recvmmsg(mqd_t mqdes, struct compat_mq_mmsg_attrs __user *attrs,
+									  unsigned int attrs_len, unsigned int flags, unsigned long start_index,
+									  const struct __kernel_timespec __user *abs_timeout);
 /*
  * Deprecated system calls which are still defined in
  * include/uapi/asm-generic/unistd.h and wanted by >= 1 arch

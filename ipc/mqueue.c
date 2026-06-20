@@ -38,8 +38,10 @@
 #include <linux/sched/wake_q.h>
 #include <linux/sched/signal.h>
 #include <linux/sched/user.h>
-
+#include <linux/uio.h>
+#include <linux/uaccess.h>
 #include <net/sock.h>
+#include <linux/rbtree_augmented.h>
 #include "util.h"
 
 struct mqueue_fs_context {
@@ -54,6 +56,10 @@ struct mqueue_fs_context {
 #define SEND		0
 #define RECV		1
 
+#define MQ_PEEK     0x02
+#define MQ_RECV     0x04
+#define MQ_VALID_FLAGS (MQ_PEEK | MQ_RECV)
+
 #define STATE_NONE	0
 #define STATE_READY	1
 
@@ -61,6 +67,8 @@ struct posix_msg_tree_node {
 	struct rb_node		rb_node;
 	struct list_head	msg_list;
 	int			priority;
+	unsigned int msg_count; /* Total messages at exactly this priority */
+	unsigned int subtree_msg_count; /* sum of messages in this node and all descendants */
 };
 
 /*
@@ -186,7 +194,41 @@ static struct ipc_namespace *get_ns_from_inode(struct inode *inode)
 	return ns;
 }
 
-/* Auxiliary functions to manipulate messages' list */
+static inline unsigned int get_subtree_count(struct rb_node *node)
+{
+	if (!node)
+		return 0;
+	return rb_entry(node, struct posix_msg_tree_node, rb_node)->subtree_msg_count;
+}
+
+static void msg_tree_propagate_subtree_msg_count(struct rb_node *node, struct rb_node *stop)
+{
+	while (node != stop) {
+		struct posix_msg_tree_node *leaf = rb_entry(node, struct posix_msg_tree_node, rb_node);
+		unsigned int new_count = leaf->msg_count +
+					 get_subtree_count(node->rb_left) +
+					 get_subtree_count(node->rb_right);
+		if (leaf->subtree_msg_count == new_count)
+			break;
+		leaf->subtree_msg_count = new_count;
+		node = rb_parent(node);
+	}
+}
+
+static void msg_tree_copy_subtree_msg_count(struct rb_node *old, struct rb_node *new)
+{
+	struct posix_msg_tree_node *old_leaf = rb_entry(old, struct posix_msg_tree_node, rb_node);
+	struct posix_msg_tree_node *new_leaf = rb_entry(new, struct posix_msg_tree_node, rb_node);
+
+	new_leaf->subtree_msg_count = old_leaf->subtree_msg_count;
+}
+
+static const struct rb_augment_callbacks msg_tree_callbacks = {
+	.propagate = msg_tree_propagate_subtree_msg_count,
+	.copy = msg_tree_copy_subtree_msg_count,
+	.rotate = msg_tree_propagate_subtree_msg_count,
+};
+
 static int msg_insert(struct msg_msg *msg, struct mqueue_inode_info *info)
 {
 	struct rb_node **p, *parent = NULL;
@@ -216,13 +258,19 @@ static int msg_insert(struct msg_msg *msg, struct mqueue_inode_info *info)
 		INIT_LIST_HEAD(&leaf->msg_list);
 	}
 	leaf->priority = msg->m_type;
+	leaf->msg_count = 1;
+	leaf->subtree_msg_count = 1;
 
 	if (rightmost)
 		info->msg_tree_rightmost = &leaf->rb_node;
 
 	rb_link_node(&leaf->rb_node, parent, p);
-	rb_insert_color(&leaf->rb_node, &info->msg_tree);
+	rb_insert_augmented(&leaf->rb_node, &info->msg_tree, &msg_tree_callbacks);
+	goto common_insert;
 insert_msg:
+	leaf->msg_count++;
+	msg_tree_propagate_subtree_msg_count(&leaf->rb_node, NULL);
+common_insert:
 	info->attr.mq_curmsgs++;
 	info->qsize += msg->m_ts;
 	list_add_tail(&msg->m_list, &leaf->msg_list);
@@ -236,8 +284,7 @@ static inline void msg_tree_erase(struct posix_msg_tree_node *leaf,
 
 	if (info->msg_tree_rightmost == node)
 		info->msg_tree_rightmost = rb_prev(node);
-
-	rb_erase(node, &info->msg_tree);
+	rb_erase_augmented(node, &info->msg_tree, &msg_tree_callbacks);
 	if (info->node_cache)
 		kfree(leaf);
 	else
@@ -277,8 +324,11 @@ try_again:
 		msg = list_first_entry(&leaf->msg_list,
 				       struct msg_msg, m_list);
 		list_del(&msg->m_list);
+		leaf->msg_count--;
 		if (list_empty(&leaf->msg_list)) {
 			msg_tree_erase(leaf, info);
+		} else {
+			msg_tree_propagate_subtree_msg_count(&leaf->rb_node, NULL);
 		}
 	}
 	info->attr.mq_curmsgs--;
@@ -765,7 +815,6 @@ static struct ext_wait_queue *wq_get_first_waiter(
 	return list_entry(ptr, struct ext_wait_queue, list);
 }
 
-
 static inline void set_cookie(struct sk_buff *skb, char code)
 {
 	((char *)skb->data)[NOTIFY_COOKIE_LEN-1] = code;
@@ -1034,27 +1083,21 @@ static inline void pipelined_receive(struct wake_q_head *wake_q,
 	__pipelined_op(wake_q, info, sender);
 }
 
-static int do_mq_timedsend(mqd_t mqdes, const char __user *u_msg_ptr,
-		size_t msg_len, unsigned int msg_prio,
-		struct timespec64 *ts)
+static ssize_t do_mq_sendmsg(mqd_t mqdes, const char __user *u_msg_ptr,
+						size_t msg_len, unsigned int msg_prio,
+						const struct timespec64 *ts, ktime_t *timeout)
 {
 	struct inode *inode;
 	struct ext_wait_queue wait;
 	struct ext_wait_queue *receiver;
 	struct msg_msg *msg_ptr;
 	struct mqueue_inode_info *info;
-	ktime_t expires, *timeout = NULL;
 	struct posix_msg_tree_node *new_leaf = NULL;
-	int ret = 0;
+	ssize_t ret = 0;
 	DEFINE_WAKE_Q(wake_q);
 
 	if (unlikely(msg_prio >= (unsigned long) MQ_PRIO_MAX))
 		return -EINVAL;
-
-	if (ts) {
-		expires = timespec64_to_ktime(*ts);
-		timeout = &expires;
-	}
 
 	audit_mq_sendrecv(mqdes, msg_len, msg_prio, ts);
 
@@ -1139,22 +1182,30 @@ out_free:
 	return ret;
 }
 
-static int do_mq_timedreceive(mqd_t mqdes, char __user *u_msg_ptr,
-		size_t msg_len, unsigned int __user *u_msg_prio,
-		struct timespec64 *ts)
+static ssize_t do_mq_timedsend(mqd_t mqdes, const char __user *u_msg_ptr,
+						  size_t msg_len, unsigned int msg_prio,
+						  struct timespec64 *ts)
+{
+	ktime_t expires, *timeout = NULL;
+
+	if (ts) {
+		expires = timespec64_to_ktime(*ts);
+		timeout = &expires;
+	}
+
+	return do_mq_sendmsg(mqdes, u_msg_ptr, msg_len, msg_prio, ts, timeout);
+}
+
+static ssize_t do_mq_recvmsg(mqd_t mqdes, char __user *u_msg_ptr, size_t msg_len,
+						unsigned int __user *u_msg_prio, const struct timespec64 *ts,
+						ktime_t *timeout)
 {
 	ssize_t ret;
 	struct msg_msg *msg_ptr;
 	struct inode *inode;
 	struct mqueue_inode_info *info;
 	struct ext_wait_queue wait;
-	ktime_t expires, *timeout = NULL;
 	struct posix_msg_tree_node *new_leaf = NULL;
-
-	if (ts) {
-		expires = timespec64_to_ktime(*ts);
-		timeout = &expires;
-	}
 
 	audit_mq_sendrecv(mqdes, msg_len, 0, ts);
 
@@ -1230,13 +1281,362 @@ static int do_mq_timedreceive(mqd_t mqdes, char __user *u_msg_ptr,
 	return ret;
 }
 
+static ssize_t do_mq_timedreceive(mqd_t mqdes, char __user *u_msg_ptr, size_t msg_len,
+							 unsigned int __user *u_msg_prio, struct timespec64 *ts)
+{
+	ktime_t expires, *timeout = NULL;
+
+	if (ts) {
+		expires = timespec64_to_ktime(*ts);
+		timeout = &expires;
+	}
+
+	return do_mq_recvmsg(mqdes, u_msg_ptr, msg_len, u_msg_prio, ts, timeout);
+}
+
+static struct msg_msg *mq_peek_index(struct mqueue_inode_info *info, unsigned long index)
+{
+	struct rb_node *node;
+	struct posix_msg_tree_node *leaf;
+	struct msg_msg *msg;
+	unsigned int right_count;
+	unsigned int offset;
+	unsigned int i = 0;
+
+	node = info->msg_tree.rb_node;
+	while (node) {
+		leaf = rb_entry(node, struct posix_msg_tree_node, rb_node);
+		right_count = get_subtree_count(node->rb_right);
+
+		if (index < right_count) {
+			node = node->rb_right;
+		} else if (index < (right_count + leaf->msg_count)) {
+			/* Target is at this priority level */
+			offset = index - right_count;
+			list_for_each_entry(msg, &leaf->msg_list, m_list) {
+				if (i == offset)
+					return msg;
+				i++;
+			}
+			break;
+		} else {
+			index -= (right_count + leaf->msg_count);
+			node = node->rb_left;
+		}
+	}
+
+	return NULL;
+}
+
+static ssize_t do_mq_recvmsg2(mqd_t mqdes, struct mq_msg_attrs *args, unsigned int flags,
+						 unsigned long index, const struct timespec64 *ts,
+						 ktime_t *timeout)
+{
+	ssize_t ret;
+	struct msg_msg *msg_ptr, *k_msg_buffer;
+	long k_m_type;
+	size_t k_m_ts;
+	struct inode *inode;
+	struct mqueue_inode_info *info;
+
+	if (flags & MQ_PEEK) {
+		audit_mq_sendrecv(mqdes, args->msg_len, 0, ts);
+
+		CLASS(fd, f)(mqdes);
+		if (fd_empty(f))
+			return -EBADF;
+
+		inode = file_inode(fd_file(f));
+		if (unlikely(fd_file(f)->f_op != &mqueue_file_operations))
+			return -EBADF;
+
+		info = MQUEUE_I(inode);
+		audit_file(fd_file(f));
+		if (unlikely(!(fd_file(f)->f_mode & FMODE_READ)))
+			return -EBADF;
+
+		if (unlikely(args->msg_len < info->attr.mq_msgsize))
+			return -EMSGSIZE;
+
+		if (index >= (unsigned long)info->attr.mq_maxmsg)
+			return -EINVAL;
+
+		spin_lock(&info->lock);
+
+		if (info->attr.mq_curmsgs == 0) {
+			spin_unlock(&info->lock);
+			return -EAGAIN;
+		}
+		msg_ptr = mq_peek_index(info, index);
+		if (!msg_ptr) {
+			spin_unlock(&info->lock);
+			return -ENODATA;
+		}
+		k_m_type = msg_ptr->m_type;
+		k_m_ts = msg_ptr->m_ts;
+
+		spin_unlock(&info->lock);
+
+		k_msg_buffer = alloc_msg(k_m_ts);
+
+		if (!k_msg_buffer)
+			return -ENOMEM;
+		ret = security_msg_msg_alloc(k_msg_buffer);
+		if (ret)
+			return ret;
+
+	/*
+	 * Two spin locks are necessary here. We are avoiding atomic memory
+	 * allocation and premature allocation before confirming
+	 * a message actually exists to peek and retrieving required buffer size
+	 * when first lock was taken.
+	 */
+		spin_lock(&info->lock);
+
+		msg_ptr = mq_peek_index(info, index);
+		if (!msg_ptr || msg_ptr->m_type != k_m_type ||
+			msg_ptr->m_ts != k_m_ts) {
+			spin_unlock(&info->lock);
+			free_msg(k_msg_buffer);
+			return -EAGAIN;
+		}
+		msg_ptr = copy_msg(msg_ptr, k_msg_buffer, k_m_ts);
+		if (IS_ERR(msg_ptr)) {
+			spin_unlock(&info->lock);
+			free_msg(k_msg_buffer);
+			return PTR_ERR(msg_ptr);
+		}
+		spin_unlock(&info->lock);
+
+		ret = k_msg_buffer->m_ts;
+		if (args->msg_prio && put_user(k_m_type, args->msg_prio)) {
+			free_msg(k_msg_buffer);
+			return -EFAULT;
+		}
+		if (store_msg((char *)args->msg_ptr, k_msg_buffer, k_m_ts)) {
+			free_msg(k_msg_buffer);
+			return -EFAULT;
+		}
+		free_msg(k_msg_buffer);
+			return ret;
+	}
+	if (flags & MQ_RECV) {
+		return do_mq_recvmsg(mqdes, (char *)args->msg_ptr, args->msg_len,
+				args->msg_prio, ts, timeout);
+	}
+
+	return -EINVAL;
+}
+
+static int mq_mmsg_copy_attrs_from_user(struct mq_mmsg_attrs *attrs,
+									   const struct mq_mmsg_attrs __user *uattrs,
+									   unsigned int attrs_len)
+{
+	if (unlikely(attrs_len < sizeof(*attrs)))
+		return -EINVAL;
+	if (unlikely(attrs_len > PAGE_SIZE))
+		return -E2BIG;
+	return copy_struct_from_user(attrs, sizeof(*attrs), uattrs, attrs_len);
+}
+
+#ifdef CONFIG_COMPAT
+static int mq_mmsg_copy_compat_attrs(struct mq_mmsg_attrs *attrs,
+									const struct compat_mq_mmsg_attrs __user *uattrs,
+									unsigned int attrs_len)
+{
+	struct compat_mq_mmsg_attrs v = {};
+	int err;
+
+	if (unlikely(attrs_len < sizeof(v)))
+		return -EINVAL;
+	if (unlikely(attrs_len > PAGE_SIZE))
+		return -E2BIG;
+	err = copy_struct_from_user(&v, sizeof(v), uattrs, attrs_len);
+
+	if (err)
+		return err;
+	attrs->msg_attrs_vec = (struct iovec __user *)compat_ptr((unsigned long)v.msg_attrs_vec);
+	attrs->ret = (int *)compat_ptr(v.ret);
+	attrs->vlen = v.vlen;
+	return 0;
+}
+
+static int mq_mmsg_copy_compat_msg_attr(struct mq_msg_attrs *attr,
+									   const struct iovec *desc_iov)
+{
+		struct compat_msg_attrs v = {};
+
+		if (desc_iov->iov_len != sizeof(v))
+			return -EINVAL;
+		if (copy_from_user(&v, desc_iov->iov_base, sizeof(v)))
+			return -EFAULT;
+
+		attr->msg_len = v.msg_len;
+		attr->msg_prio = (unsigned int *)compat_ptr(v.msg_prio);
+		attr->msg_ptr = compat_ptr(v.msg_ptr);
+		return 0;
+	}
+
+#endif
+
+static int mq_mmsg_copy_msg_attr(struct mq_msg_attrs *attr,
+								const struct iovec *desc_iov, bool compat)
+{
+	if (compat)
+		return mq_mmsg_copy_compat_msg_attr(attr, desc_iov);
+	if (desc_iov->iov_len != sizeof(*attr))
+		return -EINVAL;
+	if (copy_from_user(attr, desc_iov->iov_base, sizeof(*attr)))
+		return -EFAULT;
+	return 0;
+}
+
+static inline long mq_mmsg_done_or_error(unsigned int done, int ret)
+{
+	if (ret < 0 && done)
+		return done;
+	return ret;
+}
+
+static ssize_t do_mq_recvmmsg(mqd_t mqdes, const struct mq_mmsg_attrs *attrs,
+							 unsigned int flags, unsigned long start_idx,
+							 struct timespec64 *ts, bool compat)
+{
+	struct iov_iter iter;
+	struct iovec outer_iovstack[UIO_FASTIOV], *free_iov = outer_iovstack;
+	const struct iovec *msg_iov;
+	ktime_t batch_deadline, *timeout = NULL;
+	ssize_t ret = 0;
+	ssize_t batch_success = 0;
+	unsigned long index;
+	unsigned int i;
+
+	if (flags & (~MQ_VALID_FLAGS))
+		return -EINVAL;
+	if ((flags & MQ_RECV) && (flags & MQ_PEEK))
+		return -EINVAL;
+	if (start_idx > attrs->vlen)
+		return -EINVAL;
+	if (!attrs->vlen || attrs->vlen > UIO_MAXIOV)
+		return -EINVAL;
+
+	ret = __import_iovec(ITER_DEST,
+			     attrs->msg_attrs_vec, attrs->vlen,
+			     ARRAY_SIZE(outer_iovstack), &free_iov, &iter,
+			     compat);
+	if (ret < 0)
+		return ret;
+	msg_iov = iter_iov(&iter);
+
+	/* One absolute deadline for the whole batch. */
+	if (ts) {
+		batch_deadline = timespec64_to_ktime(*ts);
+		timeout = &batch_deadline;
+	}
+	for (i = start_idx; i < attrs->vlen; i++) {
+		struct mq_msg_attrs desc = {};
+
+		ret = mq_mmsg_copy_msg_attr(&desc, &msg_iov[i], compat);
+		if (ret < 0)
+			break;
+
+		index = (flags & MQ_PEEK) ? i : 0;
+		ret = do_mq_recvmsg2(mqdes, &desc, flags, index, ts, timeout);
+
+		if (ret < 0) {
+			if (attrs->ret && put_user(ret, attrs->ret)) {
+				kfree(free_iov);
+				return -EFAULT;
+			}
+			break;
+		}
+		batch_success++;
+	}
+
+	if (!(batch_success != attrs->vlen)) {
+		if (attrs->ret && put_user(0, attrs->ret)) {
+			kfree(free_iov);
+			return -EFAULT;
+			}
+	}
+	kfree(free_iov);
+	return mq_mmsg_done_or_error(batch_success, ret < 0 ? ret : batch_success);
+}
+
+static ssize_t do_mq_sendmmsg(mqd_t mqdes, const struct mq_mmsg_attrs *attrs,
+							 unsigned long start_idx, struct timespec64 *ts,
+							 bool compat)
+{
+	struct iov_iter iter;
+	struct iovec outer_iovstack[UIO_FASTIOV], *free_iov = outer_iovstack;
+	const struct iovec *msg_iov;
+	ktime_t batch_deadline, *timeout = NULL;
+	ssize_t ret = 0;
+	ssize_t batch_success = 0;
+	unsigned int i;
+
+	if (!attrs->vlen || attrs->vlen > UIO_MAXIOV || start_idx > attrs->vlen)
+		return -EINVAL;
+
+	ret = __import_iovec(ITER_SOURCE,
+			     attrs->msg_attrs_vec, attrs->vlen,
+			     ARRAY_SIZE(outer_iovstack), &free_iov, &iter,
+			     compat);
+	if (ret < 0)
+		return ret;
+	msg_iov = iter_iov(&iter);
+
+	if (ts) {
+		batch_deadline = timespec64_to_ktime(*ts);
+		timeout = &batch_deadline;
+	}
+	for (i = start_idx; i < attrs->vlen; i++) {
+		struct mq_msg_attrs desc = {};
+		unsigned int msg_prio = 0;
+
+		ret = mq_mmsg_copy_msg_attr(&desc, &msg_iov[i], compat);
+		if (ret < 0)
+			break;
+		if (!desc.msg_prio) {
+			ret = -EINVAL;
+			break;
+		}
+		if (get_user(msg_prio, desc.msg_prio)) {
+			ret = -EFAULT;
+			break;
+		}
+		ret = do_mq_sendmsg(mqdes, desc.msg_ptr, desc.msg_len,
+						   msg_prio, ts, timeout);
+
+		if (ret < 0) {
+			if (attrs->ret && put_user(ret, attrs->ret)) {
+				kfree(free_iov);
+				return -EFAULT;
+			}
+		break;
+		}
+		batch_success++;
+	}
+
+	if (!(batch_success != attrs->vlen)) {
+		if (attrs->ret && put_user(0, attrs->ret)) {
+			kfree(free_iov);
+			return -EFAULT;
+			}
+	}
+	kfree(free_iov);
+	return mq_mmsg_done_or_error(batch_success, ret < 0 ? ret : batch_success);
+}
+
 SYSCALL_DEFINE5(mq_timedsend, mqd_t, mqdes, const char __user *, u_msg_ptr,
-		size_t, msg_len, unsigned int, msg_prio,
-		const struct __kernel_timespec __user *, u_abs_timeout)
+			   size_t, msg_len, unsigned int, msg_prio,
+			   const struct __kernel_timespec __user *, u_abs_timeout)
 {
 	struct timespec64 ts, *p = NULL;
+
 	if (u_abs_timeout) {
 		int res = prepare_timeout(u_abs_timeout, &ts);
+
 		if (res)
 			return res;
 		p = &ts;
@@ -1244,13 +1644,36 @@ SYSCALL_DEFINE5(mq_timedsend, mqd_t, mqdes, const char __user *, u_msg_ptr,
 	return do_mq_timedsend(mqdes, u_msg_ptr, msg_len, msg_prio, p);
 }
 
-SYSCALL_DEFINE5(mq_timedreceive, mqd_t, mqdes, char __user *, u_msg_ptr,
-		size_t, msg_len, unsigned int __user *, u_msg_prio,
-		const struct __kernel_timespec __user *, u_abs_timeout)
+SYSCALL_DEFINE5(mq_sendmmsg, mqd_t, mqdes, struct mq_mmsg_attrs __user *, attrs,
+			   unsigned int, attrs_len, unsigned long, start_idx,
+			   const struct __kernel_timespec __user *, u_abs_timeout)
 {
+	struct mq_mmsg_attrs kattrs = {};
 	struct timespec64 ts, *p = NULL;
+	int ret;
+
+	ret = mq_mmsg_copy_attrs_from_user(&kattrs, attrs, attrs_len);
+	if (ret)
+		return ret;
 	if (u_abs_timeout) {
 		int res = prepare_timeout(u_abs_timeout, &ts);
+
+		if (res)
+			return res;
+		p = &ts;
+	}
+	return do_mq_sendmmsg(mqdes, &kattrs, start_idx, p, false);
+}
+
+SYSCALL_DEFINE5(mq_timedreceive, mqd_t, mqdes, char __user *, u_msg_ptr,
+			   size_t, msg_len, unsigned int __user *, u_msg_prio,
+			   const struct __kernel_timespec __user *, u_abs_timeout)
+{
+	struct timespec64 ts, *p = NULL;
+
+	if (u_abs_timeout) {
+		int res = prepare_timeout(u_abs_timeout, &ts);
+
 		if (res)
 			return res;
 		p = &ts;
@@ -1258,6 +1681,26 @@ SYSCALL_DEFINE5(mq_timedreceive, mqd_t, mqdes, char __user *, u_msg_ptr,
 	return do_mq_timedreceive(mqdes, u_msg_ptr, msg_len, u_msg_prio, p);
 }
 
+SYSCALL_DEFINE6(mq_recvmmsg, mqd_t, mqdes, struct mq_mmsg_attrs __user *, attrs,
+			   unsigned int, attrs_len, unsigned int, flags, unsigned long, start_idx,
+			   const struct __kernel_timespec __user *, u_abs_timeout)
+{
+	struct mq_mmsg_attrs kattrs = {};
+	struct timespec64 ts, *p = NULL;
+	int ret;
+
+	ret = mq_mmsg_copy_attrs_from_user(&kattrs, attrs, attrs_len);
+	if (ret)
+		return ret;
+	if (u_abs_timeout) {
+		int res = prepare_timeout(u_abs_timeout, &ts);
+
+		if (res)
+			return res;
+		p = &ts;
+	}
+	return do_mq_recvmmsg(mqdes, &kattrs, flags, start_idx, p, false);
+}
 /*
  * Notes: the case when user wants us to deregister (with NULL as pointer)
  * and he isn't currently owner of notification, will be silently discarded.
@@ -1460,7 +1903,7 @@ struct compat_mq_attr {
 };
 
 static inline int get_compat_mq_attr(struct mq_attr *attr,
-			const struct compat_mq_attr __user *uattr)
+									const struct compat_mq_attr __user *uattr)
 {
 	struct compat_mq_attr v;
 
@@ -1476,7 +1919,7 @@ static inline int get_compat_mq_attr(struct mq_attr *attr,
 }
 
 static inline int put_compat_mq_attr(const struct mq_attr *attr,
-			struct compat_mq_attr __user *uattr)
+									struct compat_mq_attr __user *uattr)
 {
 	struct compat_mq_attr v;
 
@@ -1541,11 +1984,61 @@ COMPAT_SYSCALL_DEFINE3(mq_getsetattr, mqd_t, mqdes,
 		return -EFAULT;
 	return 0;
 }
+
+COMPAT_SYSCALL_DEFINE5(mq_sendmmsg, mqd_t, mqdes, struct compat_mq_mmsg_attrs __user *, attrs,
+					  unsigned int, attrs_len, unsigned long, start_idx,
+					  const struct __kernel_timespec __user *, u_abs_timeout)
+{
+	struct mq_mmsg_attrs kattrs = {};
+	struct timespec64 ts, *p = NULL;
+	struct iovec msg_atrrs_vec = {};
+	int ret;
+
+	kattrs.msg_attrs_vec = &msg_atrrs_vec;
+	ret = mq_mmsg_copy_compat_attrs(&kattrs, attrs, attrs_len);
+	if (ret)
+		return ret;
+
+	if (u_abs_timeout) {
+		int res = prepare_timeout(u_abs_timeout, &ts);
+
+		if (res)
+			return res;
+		p = &ts;
+	}
+
+	return do_mq_sendmmsg(mqdes, &kattrs, start_idx, p, true);
+}
+
+COMPAT_SYSCALL_DEFINE6(mq_recvmmsg, mqd_t, mqdes, struct compat_mq_mmsg_attrs __user *, attrs,
+					  unsigned int, attrs_len, unsigned int, flags, unsigned long, start_idx,
+					  const struct __kernel_timespec __user *, u_abs_timeout)
+{
+	struct mq_mmsg_attrs kattrs = {};
+	struct timespec64 ts, *p = NULL;
+	struct iovec msg_atrrs_vec = {};
+	int ret;
+
+	kattrs.msg_attrs_vec = &msg_atrrs_vec;
+	ret = mq_mmsg_copy_compat_attrs(&kattrs, attrs, attrs_len);
+	if (ret)
+		return ret;
+
+	if (u_abs_timeout) {
+		int res = prepare_timeout(u_abs_timeout, &ts);
+
+		if (res)
+			return res;
+		p = &ts;
+	}
+
+	return do_mq_recvmmsg(mqdes, &kattrs, flags, start_idx, p, true);
+}
 #endif
 
 #ifdef CONFIG_COMPAT_32BIT_TIME
 static int compat_prepare_timeout(const struct old_timespec32 __user *p,
-				   struct timespec64 *ts)
+								 struct timespec64 *ts)
 {
 	if (get_old_timespec32(ts, p))
 		return -EFAULT;
@@ -1560,8 +2053,10 @@ SYSCALL_DEFINE5(mq_timedsend_time32, mqd_t, mqdes,
 		const struct old_timespec32 __user *, u_abs_timeout)
 {
 	struct timespec64 ts, *p = NULL;
+
 	if (u_abs_timeout) {
 		int res = compat_prepare_timeout(u_abs_timeout, &ts);
+
 		if (res)
 			return res;
 		p = &ts;
@@ -1575,14 +2070,17 @@ SYSCALL_DEFINE5(mq_timedreceive_time32, mqd_t, mqdes,
 		const struct old_timespec32 __user *, u_abs_timeout)
 {
 	struct timespec64 ts, *p = NULL;
+
 	if (u_abs_timeout) {
 		int res = compat_prepare_timeout(u_abs_timeout, &ts);
+
 		if (res)
 			return res;
 		p = &ts;
 	}
 	return do_mq_timedreceive(mqdes, u_msg_ptr, msg_len, u_msg_prio, p);
 }
+
 #endif
 
 static const struct inode_operations mqueue_dir_inode_operations = {

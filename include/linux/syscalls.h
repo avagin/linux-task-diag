@@ -9,6 +9,7 @@
 #ifndef _LINUX_SYSCALLS_H
 #define _LINUX_SYSCALLS_H
 
+#include "linux/mqueue.h"
 struct __aio_sigset;
 struct epoll_event;
 struct iattr;
@@ -79,6 +80,8 @@ struct mnt_id_req;
 struct ns_id_req;
 struct xattr_args;
 struct file_attr;
+struct mq_msg_attrs;
+struct mq_mmsg_attrs;
 
 #include <linux/types.h>
 #include <linux/aio_abi.h>
@@ -93,6 +96,7 @@ struct file_attr;
 #include <linux/key.h>
 #include <linux/personality.h>
 #include <trace/syscall.h>
+#include <linux/mqueue.h>
 
 #ifdef CONFIG_ARCH_HAS_SYSCALL_WRAPPER
 /*
@@ -739,7 +743,13 @@ asmlinkage long sys_sysinfo(struct sysinfo __user *info);
 asmlinkage long sys_mq_open(const char __user *name, int oflag, umode_t mode, struct mq_attr __user *attr);
 asmlinkage long sys_mq_unlink(const char __user *name);
 asmlinkage long sys_mq_timedsend(mqd_t mqdes, const char __user *msg_ptr, size_t msg_len, unsigned int msg_prio, const struct __kernel_timespec __user *abs_timeout);
+asmlinkage long sys_mq_sendmmsg(mqd_t mqdes, struct mq_mmsg_attrs __user *attrs,
+							   unsigned int attrs_len, unsigned int flags, unsigned long start_index,
+							   const struct __kernel_timespec __user *abs_timeout);
 asmlinkage long sys_mq_timedreceive(mqd_t mqdes, char __user *msg_ptr, size_t msg_len, unsigned int __user *msg_prio, const struct __kernel_timespec __user *abs_timeout);
+asmlinkage long sys_mq_recvmmsg(mqd_t mqdes, struct mq_mmsg_attrs __user *attrs,
+							   unsigned int attrs_len, unsigned int flags, unsigned long start_index,
+							   const struct __kernel_timespec __user *abs_timeout);
 asmlinkage long sys_mq_notify(mqd_t mqdes, const struct sigevent __user *notification);
 asmlinkage long sys_mq_getsetattr(mqd_t mqdes, const struct mq_attr __user *mqstat, struct mq_attr __user *omqstat);
 asmlinkage long sys_mq_timedreceive_time32(mqd_t mqdes,
