@@ -150,8 +150,7 @@ struct msg_msg *copy_msg(struct msg_msg *src, struct msg_msg *dst, size_t len)
 	dst->m_type = src->m_type;
 	dst->m_ts = src->m_ts;
 	return dst;
-
- }
+}
 
 int store_msg(void __user *dest, struct msg_msg *msg, size_t len)
 {

@@ -22,6 +22,8 @@ System calls
    ioctl/index
    mseal
    rseq
+   mq_recvmmsg
+   mq_sendmmsg
 
 Security-related interfaces
 ===========================
