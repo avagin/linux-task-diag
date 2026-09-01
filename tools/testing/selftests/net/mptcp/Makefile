@@ -13,6 +13,7 @@ TEST_PROGS := \
 	mptcp_connect_sendfile.sh \
 	mptcp_connect_splice.sh \
 	mptcp_join.sh \
+	mptcp_repair.sh \
 	mptcp_sockopt.sh \
 	pm_netlink.sh \
 	simult_flows.sh \
@@ -23,6 +24,7 @@ TEST_GEN_FILES := \
 	mptcp_connect \
 	mptcp_diag \
 	mptcp_inq \
+	mptcp_repair \
 	mptcp_sockopt \
 	pm_nl_ctl \
 # end of TEST_GEN_FILES
