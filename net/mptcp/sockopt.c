@@ -426,6 +426,8 @@ static int mptcp_setsockopt_v6(struct mptcp_sock *msk, int optname,
 	case IPV6_V6ONLY:
 	case IPV6_TRANSPARENT:
 	case IPV6_FREEBIND:
+	case IPV6_RECVPKTINFO:
+	case IPV6_2292PKTINFO:
 		lock_sock(sk);
 		ssk = __mptcp_nmpc_sk(msk);
 		if (IS_ERR(ssk)) {
@@ -453,6 +455,14 @@ static int mptcp_setsockopt_v6(struct mptcp_sock *msk, int optname,
 			inet_assign_bit(FREEBIND, sk,
 					inet_test_bit(FREEBIND, ssk));
 			break;
+#if IS_ENABLED(CONFIG_MPTCP_IPV6)
+		case IPV6_RECVPKTINFO:
+		case IPV6_2292PKTINFO:
+			if (inet6_sk(sk) && inet6_sk(ssk))
+				inet6_sk(sk)->rxopt.bits.rxinfo =
+					inet6_sk(ssk)->rxopt.bits.rxinfo;
+			break;
+#endif
 		}
 
 		release_sock(sk);
@@ -720,6 +730,7 @@ static int __mptcp_setsockopt_sol_tcp_nodelay(struct mptcp_sock *msk, int val)
 static int mptcp_setsockopt_sol_ip_set(struct mptcp_sock *msk, int optname,
 				       sockptr_t optval, unsigned int optlen)
 {
+	struct mptcp_subflow_context *subflow;
 	struct sock *sk = (struct sock *)msk;
 	struct sock *ssk;
 	int err;
@@ -730,32 +741,65 @@ static int mptcp_setsockopt_sol_ip_set(struct mptcp_sock *msk, int optname,
 
 	lock_sock(sk);
 
-	ssk = __mptcp_nmpc_sk(msk);
-	if (IS_ERR(ssk)) {
-		release_sock(sk);
-		return PTR_ERR(ssk);
+	if (msk->first) {
+		bool slow = lock_sock_fast(msk->first);
+
+		switch (optname) {
+		case IP_FREEBIND:
+			inet_assign_bit(FREEBIND, msk->first, inet_test_bit(FREEBIND, sk));
+			break;
+		case IP_TRANSPARENT:
+			inet_assign_bit(TRANSPARENT, msk->first, inet_test_bit(TRANSPARENT, sk));
+			break;
+		case IP_BIND_ADDRESS_NO_PORT:
+			inet_assign_bit(BIND_ADDRESS_NO_PORT, msk->first,
+					inet_test_bit(BIND_ADDRESS_NO_PORT, sk));
+			break;
+		case IP_LOCAL_PORT_RANGE:
+			WRITE_ONCE(inet_sk(msk->first)->local_port_range,
+				   READ_ONCE(inet_sk(sk)->local_port_range));
+			break;
+		case IP_TTL:
+			WRITE_ONCE(inet_sk(msk->first)->uc_ttl,
+				   READ_ONCE(inet_sk(sk)->uc_ttl));
+			break;
+		case IP_PKTINFO:
+			inet_assign_bit(PKTINFO, msk->first, inet_test_bit(PKTINFO, sk));
+			break;
+		}
+
+		unlock_sock_fast(msk->first, slow);
 	}
 
-	switch (optname) {
-	case IP_FREEBIND:
-		inet_assign_bit(FREEBIND, ssk, inet_test_bit(FREEBIND, sk));
-		break;
-	case IP_TRANSPARENT:
-		inet_assign_bit(TRANSPARENT, ssk,
-				inet_test_bit(TRANSPARENT, sk));
-		break;
-	case IP_BIND_ADDRESS_NO_PORT:
-		inet_assign_bit(BIND_ADDRESS_NO_PORT, ssk,
-				inet_test_bit(BIND_ADDRESS_NO_PORT, sk));
-		break;
-	case IP_LOCAL_PORT_RANGE:
-		WRITE_ONCE(inet_sk(ssk)->local_port_range,
-			   READ_ONCE(inet_sk(sk)->local_port_range));
-		break;
-	default:
-		release_sock(sk);
-		WARN_ON_ONCE(1);
-		return -EOPNOTSUPP;
+	mptcp_for_each_subflow(msk, subflow) {
+		ssk = mptcp_subflow_tcp_sock(subflow);
+		bool slow = lock_sock_fast(ssk);
+
+		switch (optname) {
+		case IP_FREEBIND:
+			inet_assign_bit(FREEBIND, ssk, inet_test_bit(FREEBIND, sk));
+			break;
+		case IP_TRANSPARENT:
+			inet_assign_bit(TRANSPARENT, ssk, inet_test_bit(TRANSPARENT, sk));
+			break;
+		case IP_BIND_ADDRESS_NO_PORT:
+			inet_assign_bit(BIND_ADDRESS_NO_PORT, ssk,
+					inet_test_bit(BIND_ADDRESS_NO_PORT, sk));
+			break;
+		case IP_LOCAL_PORT_RANGE:
+			WRITE_ONCE(inet_sk(ssk)->local_port_range,
+				   READ_ONCE(inet_sk(sk)->local_port_range));
+			break;
+		case IP_TTL:
+			WRITE_ONCE(inet_sk(ssk)->uc_ttl,
+				   READ_ONCE(inet_sk(sk)->uc_ttl));
+			break;
+		case IP_PKTINFO:
+			inet_assign_bit(PKTINFO, ssk, inet_test_bit(PKTINFO, sk));
+			break;
+		}
+
+		unlock_sock_fast(ssk, slow);
 	}
 
 	sockopt_seq_inc(msk);
@@ -799,6 +843,8 @@ static int mptcp_setsockopt_v4(struct mptcp_sock *msk, int optname,
 	case IP_TRANSPARENT:
 	case IP_BIND_ADDRESS_NO_PORT:
 	case IP_LOCAL_PORT_RANGE:
+	case IP_TTL:
+	case IP_PKTINFO:
 		return mptcp_setsockopt_sol_ip_set(msk, optname, optval, optlen);
 	case IP_TOS:
 		return mptcp_setsockopt_v4_set_tos(msk, optname, optval, optlen);
@@ -1483,6 +1529,16 @@ static int mptcp_getsockopt_v4(struct mptcp_sock *msk, int optname,
 	switch (optname) {
 	case IP_TOS:
 		return mptcp_put_int_option(msk, optval, optlen, READ_ONCE(inet_sk(sk)->tos));
+	case IP_TTL: {
+		int val = READ_ONCE(inet_sk(sk)->uc_ttl);
+
+		if (val < 0)
+			val = READ_ONCE(sock_net(sk)->ipv4.sysctl_ip_default_ttl);
+		return mptcp_put_int_option(msk, optval, optlen, val);
+	}
+	case IP_PKTINFO:
+		return mptcp_put_int_option(msk, optval, optlen,
+				inet_test_bit(PKTINFO, sk));
 	case IP_FREEBIND:
 		return mptcp_put_int_option(msk, optval, optlen,
 				inet_test_bit(FREEBIND, sk));
@@ -1504,11 +1560,21 @@ static int mptcp_getsockopt_v6(struct mptcp_sock *msk, int optname,
 			       char __user *optval, int __user *optlen)
 {
 	struct sock *sk = (void *)msk;
+#if IS_ENABLED(CONFIG_MPTCP_IPV6)
+	struct ipv6_pinfo *np = inet6_sk(sk);
+#endif
 
 	switch (optname) {
 	case IPV6_V6ONLY:
 		return mptcp_put_int_option(msk, optval, optlen,
 					    sk->sk_ipv6only);
+	case IPV6_RECVPKTINFO:
+#if IS_ENABLED(CONFIG_MPTCP_IPV6)
+		return mptcp_put_int_option(msk, optval, optlen,
+					    np ? np->rxopt.bits.rxinfo : 0);
+#else
+		return -EOPNOTSUPP;
+#endif
 	case IPV6_TRANSPARENT:
 		return mptcp_put_int_option(msk, optval, optlen,
 					    inet_test_bit(TRANSPARENT, sk));
@@ -1622,6 +1688,13 @@ static void sync_socket_options(struct mptcp_sock *msk, struct sock *ssk)
 	inet_assign_bit(FREEBIND, ssk, inet_test_bit(FREEBIND, sk));
 	inet_assign_bit(BIND_ADDRESS_NO_PORT, ssk, inet_test_bit(BIND_ADDRESS_NO_PORT, sk));
 	WRITE_ONCE(inet_sk(ssk)->local_port_range, READ_ONCE(inet_sk(sk)->local_port_range));
+	WRITE_ONCE(inet_sk(ssk)->uc_ttl, READ_ONCE(inet_sk(sk)->uc_ttl));
+	inet_assign_bit(PKTINFO, ssk, inet_test_bit(PKTINFO, sk));
+#if IS_ENABLED(CONFIG_MPTCP_IPV6)
+	if (sk->sk_family == AF_INET6 && ssk->sk_family == AF_INET6 &&
+	    inet6_sk(sk) && inet6_sk(ssk))
+		inet6_sk(ssk)->rxopt.bits.rxinfo = inet6_sk(sk)->rxopt.bits.rxinfo;
+#endif
 	ssk->sk_reuse = sk->sk_reuse;
 	ssk->sk_reuseport = sk->sk_reuseport;
 }
