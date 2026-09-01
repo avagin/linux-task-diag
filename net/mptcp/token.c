@@ -395,6 +395,37 @@ void mptcp_token_destroy(struct mptcp_sock *msk)
 	WRITE_ONCE(msk->token, 0);
 }
 
+int mptcp_token_repair_register(struct mptcp_sock *msk, u64 local_key, u64 remote_key)
+{
+	struct sock *sk = (struct sock *)msk;
+	struct token_bucket *bucket;
+	u32 token;
+	u64 idsn;
+
+	mptcp_crypto_key_sha(local_key, &token, &idsn);
+	bucket = token_bucket(token);
+
+	spin_lock_bh(&bucket->lock);
+	if (__token_bucket_busy(bucket, token)) {
+		spin_unlock_bh(&bucket->lock);
+		return -EADDRINUSE;
+	}
+
+	WRITE_ONCE(msk->local_key, local_key);
+	WRITE_ONCE(msk->remote_key, remote_key);
+	WRITE_ONCE(msk->token, token);
+	WRITE_ONCE(msk->can_ack, true);
+	WRITE_ONCE(msk->fully_established, true);
+
+	__sk_nulls_add_node_rcu(sk, &bucket->msk_chain);
+	bucket->chain_len++;
+	spin_unlock_bh(&bucket->lock);
+
+	sock_prot_inuse_add(sock_net(sk), sk->sk_prot, 1);
+	return 0;
+}
+EXPORT_SYMBOL_GPL(mptcp_token_repair_register);
+
 void __init mptcp_token_init(void)
 {
 	int i;

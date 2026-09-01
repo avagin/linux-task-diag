@@ -332,6 +332,8 @@ struct mptcp_sock {
 			free_first:1,
 			rcvspace_init:1,
 			fastclosing:1;
+	u8		repair:1,
+			repair_queue:2;
 	u32		notsent_lowat;
 	int		keepalive_cnt;
 	int		keepalive_idle;
@@ -830,6 +832,7 @@ bool __mptcp_close(struct sock *sk, long timeout);
 void mptcp_cancel_work(struct sock *sk);
 void __mptcp_unaccepted_force_close(struct sock *sk);
 void mptcp_set_state(struct sock *sk, int state);
+void mptcp_copy_inaddrs(struct sock *msk, const struct sock *ssk);
 
 bool mptcp_addresses_equal(const struct mptcp_addr_info *a,
 			   const struct mptcp_addr_info *b, bool use_port);
@@ -982,6 +985,7 @@ static inline u64 mptcp_expand_seq(u64 old_seq, u64 cur_seq, bool use_64bit)
 void __mptcp_check_push(struct sock *sk, struct sock *ssk);
 void __mptcp_data_acked(struct sock *sk);
 void __mptcp_error_report(struct sock *sk);
+void mptcp_check_send_data_fin(struct sock *sk);
 bool mptcp_update_rcv_data_fin(struct mptcp_sock *msk, u64 data_fin_seq, bool use_64bit);
 static inline bool mptcp_data_fin_enabled(const struct mptcp_sock *msk)
 {
@@ -1088,6 +1092,7 @@ struct mptcp_sock *mptcp_token_get_sock(struct net *net, u32 token);
 struct mptcp_sock *mptcp_token_iter_next(const struct net *net, long *s_slot,
 					 long *s_num);
 void mptcp_token_destroy(struct mptcp_sock *msk);
+int mptcp_token_repair_register(struct mptcp_sock *msk, u64 local_key, u64 remote_key);
 
 void mptcp_crypto_key_sha(u64 key, u32 *token, u64 *idsn);
 

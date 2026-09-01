@@ -138,5 +138,81 @@ struct mptcp_full_info {
 #define MPTCP_TCPINFO		2
 #define MPTCP_SUBFLOW_ADDRS	3
 #define MPTCP_FULL_INFO		4
+#define MPTCP_REPAIR		10
+#define MPTCP_REPAIR_KEYS	11
+#define MPTCP_REPAIR_SEQ	12
+#define MPTCP_REPAIR_SUBFLOW	13
+#define MPTCP_REPAIR_QUEUE	14
+
+/* Values for MPTCP_REPAIR */
+#define MPTCP_REPAIR_OFF	0
+#define MPTCP_REPAIR_ON		1
+#define MPTCP_REPAIR_OFF_NO_WP	2
+
+#define MPTCP_KEY_FLAG_CSUM_ENABLED	_BITUL(0)
+#define MPTCP_KEY_FLAG_64BIT_ACK	_BITUL(1)
+#define MPTCP_KEY_FLAG_FALLBACK		_BITUL(2)
+
+struct mptcp_repair_keys {
+	__u64	local_key;
+	__u64	remote_key;
+	__u32	token;
+	__u32	flags;
+};
+
+/* Flags for MPTCP_REPAIR_SEQ */
+#define MPTCP_SEQ_FLAG_RCV_DATA_FIN		_BITUL(0)
+#define MPTCP_SEQ_FLAG_SND_DATA_FIN_ENABLE	_BITUL(1)
+#define MPTCP_SEQ_FLAG_ALLOW_INFINITE_FALLBACK	_BITUL(2)
+
+struct mptcp_repair_seq {
+	__u64	write_seq;
+	__u64	snd_nxt;
+	__u64	snd_una;
+	__u64	rcv_nxt;
+	__u64	rcv_wnd_sent;
+	__u64	rcv_data_fin_seq;
+	__u32	mptcp_state;
+	__u32	flags;
+};
+
+/* Flags for MPTCP_REPAIR_SUBFLOW */
+#define MPTCP_SUBFLOW_REPAIR_FLAG_SACK_OK	_BITUL(0)
+#define MPTCP_SUBFLOW_REPAIR_FLAG_TIMESTAMPS	_BITUL(1)
+#define MPTCP_SUBFLOW_REPAIR_FLAG_BACKUP	_BITUL(2)
+#define MPTCP_SUBFLOW_REPAIR_FLAG_JOIN		_BITUL(3)
+
+struct mptcp_repair_subflow {
+	struct mptcp_subflow_addrs addrs;
+	__u32	subflow_id;
+	__u32	snd_una;
+	__u32	snd_nxt;
+	__u32	rcv_nxt;
+	__u32	snd_wnd;
+	__u32	rcv_wnd;
+	__u32	mss_clamp;
+	__u32	ts_recent;
+	__u32	ts_recent_stamp;
+	__u32	tsoffset;
+	__u16	flags;
+	__u8	snd_wscale;
+	__u8	rcv_wscale;
+	__u8	local_id;
+	__u8	remote_id;
+	__u16	reserved;
+	__u64	idsn;
+	__u64	map_seq;
+	__u32	map_subflow_seq;
+	__u32	ssn_offset;
+	__u32	rel_write_seq;
+	__u32	reserved2;
+};
+
+enum {
+	MPTCP_SEND_QUEUE = 0,
+	MPTCP_RECV_QUEUE = 1,
+	MPTCP_NO_QUEUE = 2,
+	MPTCP_QUEUES_NR,
+};
 
 #endif /* _UAPI_MPTCP_H */

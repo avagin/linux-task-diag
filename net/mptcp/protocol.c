@@ -48,7 +48,6 @@ enum {
 static struct percpu_counter mptcp_sockets_allocated ____cacheline_aligned_in_smp;
 
 static void __mptcp_destroy_sock(struct sock *sk);
-static void mptcp_check_send_data_fin(struct sock *sk);
 
 DEFINE_PER_CPU(struct mptcp_delegated_action, mptcp_delegated_actions) = {
 	.bh_lock = INIT_LOCAL_LOCK(bh_lock),
@@ -1991,6 +1990,56 @@ static void mptcp_rps_record_subflows(const struct mptcp_sock *msk)
 	}
 }
 
+static int mptcp_send_rcvq(struct sock *sk, struct msghdr *msg, size_t size)
+{
+	struct mptcp_sock *msk = mptcp_sk(sk);
+	struct sk_buff *skb, *tail;
+	u64 map_seq;
+	int err = -ENOMEM;
+	int data_len = 0;
+
+	if (size == 0)
+		return 0;
+
+	if (size > PAGE_SIZE) {
+		int npages = min_t(size_t, size >> PAGE_SHIFT, MAX_SKB_FRAGS);
+
+		data_len = npages << PAGE_SHIFT;
+		size = data_len + (size & ~PAGE_MASK);
+	}
+	skb = alloc_skb_with_frags(size - data_len, data_len,
+				   PAGE_ALLOC_COSTLY_ORDER,
+				   &err, sk->sk_allocation);
+	if (!skb)
+		return err;
+
+	skb_put(skb, size - data_len);
+	skb->data_len = data_len;
+	skb->len = size;
+
+	err = skb_copy_datagram_from_iter(skb, 0, &msg->msg_iter, size);
+	if (err) {
+		kfree_skb(skb);
+		return err;
+	}
+
+	tail = skb_peek_tail(&sk->sk_receive_queue);
+	map_seq = tail ? MPTCP_SKB_CB(tail)->end_seq : msk->ack_seq;
+
+	MPTCP_SKB_CB(skb)->map_seq = map_seq;
+	MPTCP_SKB_CB(skb)->end_seq = map_seq + size;
+	MPTCP_SKB_CB(skb)->offset = 0;
+
+	sk_forced_mem_schedule(sk, skb->truesize);
+	skb_set_owner_r(skb, sk);
+
+	msk->bytes_received += size;
+	WRITE_ONCE(msk->ack_seq, map_seq + size);
+	__skb_queue_tail(&sk->sk_receive_queue, skb);
+
+	return size;
+}
+
 static int mptcp_sendmsg(struct sock *sk, struct msghdr *msg, size_t len)
 {
 	struct mptcp_sock *msk = mptcp_sk(sk);
@@ -2007,28 +2056,39 @@ static int mptcp_sendmsg(struct sock *sk, struct msghdr *msg, size_t len)
 
 	mptcp_rps_record_subflows(msk);
 
-	if (unlikely(inet_test_bit(DEFER_CONNECT, sk) ||
-		     msg->msg_flags & MSG_FASTOPEN)) {
-		int copied_syn = 0;
-
-		ret = mptcp_sendmsg_fastopen(sk, msg, len, &copied_syn);
-		copied += copied_syn;
-		if (ret == -EINPROGRESS && copied_syn > 0)
+	if (unlikely(msk->repair)) {
+		if (msk->repair_queue == MPTCP_RECV_QUEUE) {
+			copied = mptcp_send_rcvq(sk, msg, len);
 			goto out;
-		else if (ret)
+		}
+		if (msk->repair_queue == MPTCP_NO_QUEUE) {
+			ret = -EINVAL;
 			goto do_error;
-	}
+		}
+	} else {
+		if (unlikely(inet_test_bit(DEFER_CONNECT, sk) ||
+			     msg->msg_flags & MSG_FASTOPEN)) {
+			int copied_syn = 0;
 
-	timeo = sock_sndtimeo(sk, msg->msg_flags & MSG_DONTWAIT);
+			ret = mptcp_sendmsg_fastopen(sk, msg, len, &copied_syn);
+			copied += copied_syn;
+			if (ret == -EINPROGRESS && copied_syn > 0)
+				goto out;
+			else if (ret)
+				goto do_error;
+		}
 
-	if ((1 << sk->sk_state) & ~(TCPF_ESTABLISHED | TCPF_CLOSE_WAIT)) {
-		ret = sk_stream_wait_connect(sk, &timeo);
-		if (ret)
-			goto do_error;
+		timeo = sock_sndtimeo(sk, msg->msg_flags & MSG_DONTWAIT);
+
+		if ((1 << sk->sk_state) & ~(TCPF_ESTABLISHED | TCPF_CLOSE_WAIT)) {
+			ret = sk_stream_wait_connect(sk, &timeo);
+			if (ret)
+				goto do_error;
+		}
 	}
 
 	ret = -EPIPE;
-	if (unlikely(sk->sk_err || (sk->sk_shutdown & SEND_SHUTDOWN)))
+	if (unlikely(sk->sk_err || (!msk->repair && (sk->sk_shutdown & SEND_SHUTDOWN))))
 		goto do_error;
 
 	pfrag = sk_page_frag(sk);
@@ -2041,7 +2101,7 @@ static int mptcp_sendmsg(struct sock *sk, struct msghdr *msg, size_t len)
 		u32 copy_limit;
 
 		/* ensure fitting the notsent_lowat() constraint */
-		copy_limit = mptcp_send_limit(sk);
+		copy_limit = unlikely(msk->repair) ? UINT_MAX : mptcp_send_limit(sk);
 		if (!copy_limit)
 			goto wait_for_memory;
 
@@ -2068,7 +2128,9 @@ static int mptcp_sendmsg(struct sock *sk, struct msghdr *msg, size_t len)
 		psize = min_t(size_t, psize, copy_limit);
 		total_ts = psize + frag_truesize;
 
-		if (!sk_wmem_schedule(sk, total_ts))
+		if (unlikely(msk->repair))
+			sk_forced_mem_schedule(sk, total_ts);
+		else if (!sk_wmem_schedule(sk, total_ts))
 			goto wait_for_memory;
 
 		ret = do_copy_data_nocache(sk, psize, &msg->msg_iter,
@@ -2091,8 +2153,21 @@ static int mptcp_sendmsg(struct sock *sk, struct msghdr *msg, size_t len)
 		if (!dfrag_collapsed) {
 			get_page(dfrag->page);
 			list_add_tail(&dfrag->list, &msk->rtx_queue);
-			if (!msk->first_pending)
+			if (!msk->repair && !msk->first_pending)
 				msk->first_pending = dfrag;
+		}
+		if (unlikely(msk->repair)) {
+			if (dfrag->data_seq + dfrag->data_len <= msk->snd_nxt) {
+				dfrag->already_sent = dfrag->data_len;
+			} else if (dfrag->data_seq < msk->snd_nxt) {
+				dfrag->already_sent = msk->snd_nxt - dfrag->data_seq;
+				if (!msk->first_pending)
+					msk->first_pending = dfrag;
+			} else {
+				dfrag->already_sent = 0;
+				if (!msk->first_pending)
+					msk->first_pending = dfrag;
+			}
 		}
 		pr_debug("msk=%p dfrag at seq=%llu len=%u sent=%u new=%d\n", msk,
 			 dfrag->data_seq, dfrag->data_len, dfrag->already_sent,
@@ -2101,6 +2176,10 @@ static int mptcp_sendmsg(struct sock *sk, struct msghdr *msg, size_t len)
 		continue;
 
 wait_for_memory:
+		if (unlikely(msk->repair)) {
+			ret = -ENOBUFS;
+			goto do_error;
+		}
 		set_bit(SOCK_NOSPACE, &sk->sk_socket->flags);
 		__mptcp_push_pending(sk, msg->msg_flags);
 		ret = sk_stream_wait_memory(sk, &timeo);
@@ -2116,7 +2195,8 @@ wait_for_memory:
 			if (dfrag)
 				dfrag->eor = 1;
 		}
-		__mptcp_push_pending(sk, msg->msg_flags);
+		if (likely(!msk->repair))
+			__mptcp_push_pending(sk, msg->msg_flags);
 	}
 
 out:
@@ -2371,6 +2451,28 @@ static unsigned int mptcp_inq_hint(const struct sock *sk)
 	return 0;
 }
 
+static int mptcp_peek_sndq(struct sock *sk, struct msghdr *msg, int len)
+{
+	struct mptcp_sock *msk = mptcp_sk(sk);
+	struct mptcp_data_frag *dfrag;
+	int copied = 0;
+
+	list_for_each_entry(dfrag, &msk->rtx_queue, list) {
+		int copy = min_t(int, len - copied, dfrag->data_len);
+
+		if (copy <= 0)
+			break;
+
+		if (copy_page_to_iter(dfrag->page, dfrag->offset,
+				      copy, &msg->msg_iter) != copy)
+			return -EFAULT;
+
+		copied += copy;
+	}
+
+	return copied;
+}
+
 static int mptcp_recvmsg(struct sock *sk, struct msghdr *msg, size_t len,
 			 int flags)
 {
@@ -2387,6 +2489,11 @@ static int mptcp_recvmsg(struct sock *sk, struct msghdr *msg, size_t len,
 	lock_sock(sk);
 	if (unlikely(sk->sk_state == TCP_LISTEN)) {
 		copied = -ENOTCONN;
+		goto out_err;
+	}
+
+	if (unlikely(msk->repair && msk->repair_queue == MPTCP_SEND_QUEUE)) {
+		copied = mptcp_peek_sndq(sk, msg, len);
 		goto out_err;
 	}
 
@@ -3359,7 +3466,7 @@ static int mptcp_close_state(struct sock *sk)
 	return next & TCP_ACTION_FIN;
 }
 
-static void mptcp_check_send_data_fin(struct sock *sk)
+void mptcp_check_send_data_fin(struct sock *sk)
 {
 	struct mptcp_subflow_context *subflow;
 	struct mptcp_sock *msk = mptcp_sk(sk);
@@ -3368,10 +3475,16 @@ static void mptcp_check_send_data_fin(struct sock *sk)
 		 msk, msk->snd_data_fin_enable, !!mptcp_send_head(sk),
 		 msk->snd_nxt, msk->write_seq);
 
-	/* we still need to enqueue subflows or not really shutting down,
-	 * skip this
+	/*
+	 * We still need to enqueue subflows or not really shutting down, skip this.
+	 * Note: msk->snd_nxt == msk->write_seq occurs on restored sockets in
+	 * unacknowledged half-closed states (e.g. TCP_FIN_WAIT1, TCP_LAST_ACK).
+	 * If msk->snd_una == msk->write_seq (e.g. TCP_FIN_WAIT2), the DATA_FIN
+	 * was already acknowledged by the peer, so no retransmission is needed.
 	 */
-	if (!msk->snd_data_fin_enable || msk->snd_nxt + 1 != msk->write_seq ||
+	if (!msk->snd_data_fin_enable ||
+	    (msk->snd_nxt + 1 != msk->write_seq && msk->snd_nxt != msk->write_seq) ||
+	    msk->snd_una == msk->write_seq ||
 	    mptcp_send_head(sk))
 		return;
 
@@ -3461,7 +3574,7 @@ bool __mptcp_close(struct sock *sk, long timeout)
 
 	WRITE_ONCE(sk->sk_shutdown, SHUTDOWN_MASK);
 
-	if ((1 << sk->sk_state) & (TCPF_LISTEN | TCPF_CLOSE)) {
+	if ((1 << sk->sk_state) & (TCPF_LISTEN | TCPF_CLOSE) || unlikely(msk->repair)) {
 		mptcp_check_listen_stop(sk);
 		mptcp_set_state(sk, TCP_CLOSE);
 		goto cleanup;
@@ -3537,7 +3650,7 @@ static void mptcp_close(struct sock *sk, long timeout)
 	sock_put(sk);
 }
 
-static void mptcp_copy_inaddrs(struct sock *msk, const struct sock *ssk)
+void mptcp_copy_inaddrs(struct sock *msk, const struct sock *ssk)
 {
 #if IS_ENABLED(CONFIG_MPTCP_IPV6)
 	const struct ipv6_pinfo *ssk6 = inet6_sk(ssk);
@@ -4152,17 +4265,23 @@ static int mptcp_connect(struct sock *sk, struct sockaddr_unsized *uaddr,
 		mptcp_early_fallback(msk, subflow, MPTCP_MIB_MD5SIGFALLBACK);
 #endif
 	if (subflow->request_mptcp) {
-		if (mptcp_active_should_disable(sk))
+		if (unlikely(msk->repair)) {
+			tcp_sk(ssk)->repair = 1;
+			ssk->sk_reuse = SK_FORCE_REUSE;
+		} else if (mptcp_active_should_disable(sk)) {
 			mptcp_early_fallback(msk, subflow,
 					     MPTCP_MIB_MPCAPABLEACTIVEDISABLED);
-		else if (mptcp_token_new_connect(ssk) < 0)
+		} else if (mptcp_token_new_connect(ssk) < 0) {
 			mptcp_early_fallback(msk, subflow,
 					     MPTCP_MIB_TOKENFALLBACKINIT);
+		}
 	}
 
-	WRITE_ONCE(msk->write_seq, subflow->idsn);
-	WRITE_ONCE(msk->snd_nxt, subflow->idsn);
-	WRITE_ONCE(msk->snd_una, subflow->idsn);
+	if (likely(!msk->repair)) {
+		WRITE_ONCE(msk->write_seq, subflow->idsn);
+		WRITE_ONCE(msk->snd_nxt, subflow->idsn);
+		WRITE_ONCE(msk->snd_una, subflow->idsn);
+	}
 	if (likely(!__mptcp_check_fallback(msk)))
 		MPTCP_INC_STATS(sock_net(sk), MPTCP_MIB_MPCAPABLEACTIVE);
 
@@ -4198,9 +4317,11 @@ out:
 	 * subflow_finish_connect()
 	 */
 	if (unlikely(err)) {
-		/* avoid leaving a dangling token in an unconnected socket */
-		mptcp_token_destroy(msk);
-		mptcp_set_state(sk, TCP_CLOSE);
+		if (likely(!msk->repair)) {
+			/* avoid leaving a dangling token in an unconnected socket */
+			mptcp_token_destroy(msk);
+			mptcp_set_state(sk, TCP_CLOSE);
+		}
 		return err;
 	}
 
