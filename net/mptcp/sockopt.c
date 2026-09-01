@@ -309,25 +309,46 @@ static int mptcp_setsockopt_sol_socket(struct mptcp_sock *msk, int optname,
 	case SO_REUSEADDR:
 	case SO_BINDTODEVICE:
 	case SO_BINDTOIFINDEX:
-		lock_sock(sk);
-		ssk = __mptcp_nmpc_sk(msk);
-		if (IS_ERR(ssk)) {
-			release_sock(sk);
-			return PTR_ERR(ssk);
-		}
-
-		ret = sk_setsockopt(ssk, SOL_SOCKET, optname, optval, optlen);
+		ret = sock_setsockopt(sk->sk_socket, SOL_SOCKET, optname, optval, optlen);
 		if (ret == 0) {
-			if (optname == SO_REUSEPORT)
-				sk->sk_reuseport = ssk->sk_reuseport;
-			else if (optname == SO_REUSEADDR)
-				sk->sk_reuse = ssk->sk_reuse;
-			else if (optname == SO_BINDTODEVICE)
-				sk->sk_bound_dev_if = ssk->sk_bound_dev_if;
-			else if (optname == SO_BINDTOIFINDEX)
-				sk->sk_bound_dev_if = ssk->sk_bound_dev_if;
+			struct mptcp_subflow_context *subflow;
+
+			lock_sock(sk);
+			sockopt_seq_inc(msk);
+			if (msk->first && !__mptcp_has_initial_subflow(msk)) {
+				bool slow = lock_sock_fast(msk->first);
+
+				if (optname == SO_REUSEPORT) {
+					msk->first->sk_reuseport = sk->sk_reuseport;
+				} else if (optname == SO_REUSEADDR) {
+					msk->first->sk_reuse = sk->sk_reuse;
+				} else if (optname == SO_BINDTODEVICE ||
+					   optname == SO_BINDTOIFINDEX) {
+					msk->first->sk_bound_dev_if = sk->sk_bound_dev_if;
+					sk_dst_reset(msk->first);
+				}
+
+				unlock_sock_fast(msk->first, slow);
+			}
+			mptcp_for_each_subflow(msk, subflow) {
+				ssk = mptcp_subflow_tcp_sock(subflow);
+				bool slow = lock_sock_fast(ssk);
+
+				if (optname == SO_REUSEPORT) {
+					ssk->sk_reuseport = sk->sk_reuseport;
+				} else if (optname == SO_REUSEADDR) {
+					ssk->sk_reuse = sk->sk_reuse;
+				} else if (optname == SO_BINDTODEVICE ||
+					   optname == SO_BINDTOIFINDEX) {
+					ssk->sk_bound_dev_if = sk->sk_bound_dev_if;
+					sk_dst_reset(ssk);
+				}
+
+				subflow->setsockopt_seq = msk->setsockopt_seq;
+				unlock_sock_fast(ssk, slow);
+			}
+			release_sock(sk);
 		}
-		release_sock(sk);
 		return ret;
 	case SO_KEEPALIVE:
 	case SO_PRIORITY:
@@ -1601,6 +1622,8 @@ static void sync_socket_options(struct mptcp_sock *msk, struct sock *ssk)
 	inet_assign_bit(FREEBIND, ssk, inet_test_bit(FREEBIND, sk));
 	inet_assign_bit(BIND_ADDRESS_NO_PORT, ssk, inet_test_bit(BIND_ADDRESS_NO_PORT, sk));
 	WRITE_ONCE(inet_sk(ssk)->local_port_range, READ_ONCE(inet_sk(sk)->local_port_range));
+	ssk->sk_reuse = sk->sk_reuse;
+	ssk->sk_reuseport = sk->sk_reuseport;
 }
 
 void mptcp_sockopt_sync_locked(struct mptcp_sock *msk, struct sock *ssk)
