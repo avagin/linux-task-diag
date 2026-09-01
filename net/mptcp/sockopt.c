@@ -371,6 +371,32 @@ static int mptcp_setsockopt_sol_socket(struct mptcp_sock *msk, int optname,
 								optval, optlen);
 	case SO_LINGER:
 		return mptcp_setsockopt_sol_socket_linger(msk, optval, optlen);
+	case SO_BUF_LOCK:
+		ret = sock_setsockopt(sk->sk_socket, SOL_SOCKET, optname, optval, optlen);
+		if (ret == 0) {
+			struct mptcp_subflow_context *subflow;
+
+			lock_sock(sk);
+			sockopt_seq_inc(msk);
+			mptcp_for_each_subflow(msk, subflow) {
+				ssk = mptcp_subflow_tcp_sock(subflow);
+				bool slow = lock_sock_fast(ssk);
+
+				ssk->sk_userlocks |= sk->sk_userlocks &
+						     (SOCK_RCVBUF_LOCK | SOCK_SNDBUF_LOCK);
+				if (sk->sk_userlocks & SOCK_SNDBUF_LOCK) {
+					WRITE_ONCE(ssk->sk_sndbuf, sk->sk_sndbuf);
+					mptcp_subflow_ctx(ssk)->cached_sndbuf = sk->sk_sndbuf;
+				}
+				if (sk->sk_userlocks & SOCK_RCVBUF_LOCK)
+					__mptcp_subflow_set_rcvbuf(ssk, sk->sk_rcvbuf);
+
+				subflow->setsockopt_seq = msk->setsockopt_seq;
+				unlock_sock_fast(ssk, slow);
+			}
+			release_sock(sk);
+		}
+		return ret;
 	case SO_RCVLOWAT:
 	case SO_RCVTIMEO_OLD:
 	case SO_RCVTIMEO_NEW:
