@@ -73,6 +73,7 @@ Contents:
    mctp
    mpls-sysctl
    mptcp
+   mptcp-repair
    mptcp-sysctl
    multiqueue
    multi-pf-netdev
