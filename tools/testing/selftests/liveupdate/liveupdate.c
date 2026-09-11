@@ -174,6 +174,53 @@ TEST_F(liveupdate_device, preserve_memfd)
 }
 
 /*
+ * Test Case: Pre-kexec Preserve and Retrieve MemFD
+ *
+ * Verifies that a memfd can be preserved into a session, the original memfd
+ * closed, and then retrieved from the same session without kexec. Also verifies
+ * that the retrieved memfd contains the original data and is writable.
+ */
+TEST_F(liveupdate_device, pre_kexec_preserve_and_retrieve_memfd)
+{
+	const char *test_str = "pre-kexec live update data";
+	const char *new_str = "appended after retrieve";
+	char read_buf[64] = {};
+	int session_fd, mem_fd, retrieved_fd;
+
+	self->fd1 = open(LIVEUPDATE_DEV, O_RDWR);
+	if (self->fd1 < 0 && errno == ENOENT)
+		SKIP(return, "%s does not exist", LIVEUPDATE_DEV);
+	ASSERT_GE(self->fd1, 0);
+
+	session_fd = luo_create_session(self->fd1, "pre-kexec-retrieve-test");
+	ASSERT_GE(session_fd, 0);
+
+	mem_fd = memfd_create("test-memfd", 0);
+	ASSERT_GE(mem_fd, 0);
+
+	ASSERT_EQ(write(mem_fd, test_str, strlen(test_str)), strlen(test_str));
+	ASSERT_EQ(luo_session_preserve_fd(session_fd, mem_fd, 0x5678), 0);
+
+	/* Simulate original process closing its FD and exiting */
+	ASSERT_EQ(close(mem_fd), 0);
+
+	/* Simulate new process restoring the FD from the session */
+	retrieved_fd = luo_session_retrieve_fd(session_fd, 0x5678);
+	ASSERT_GE(retrieved_fd, 0);
+
+	/* Verify data integrity */
+	ASSERT_EQ(lseek(retrieved_fd, 0, SEEK_SET), 0);
+	ASSERT_EQ(read(retrieved_fd, read_buf, sizeof(read_buf)), strlen(test_str));
+	ASSERT_STREQ(read_buf, test_str);
+
+	/* Verify the retrieved memfd is unfrozen and writable */
+	ASSERT_EQ(write(retrieved_fd, new_str, strlen(new_str)), strlen(new_str));
+
+	ASSERT_EQ(close(session_fd), 0);
+	ASSERT_EQ(close(retrieved_fd), 0);
+}
+
+/*
  * Test Case: Preserve Multiple MemFDs
  *
  * Verifies that multiple memfds can be preserved in a single session,
