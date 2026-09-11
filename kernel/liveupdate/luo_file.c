@@ -340,11 +340,13 @@ void luo_file_unpreserve_files(struct luo_file_set *file_set)
 		luo_file = list_last_entry(&file_set->files_list,
 					   struct luo_file, list);
 
-		args.handler = luo_file->fh;
-		args.file = luo_file->file;
-		args.serialized_data = luo_file->serialized_data;
-		args.private_data = luo_file->private_data;
-		luo_file->fh->ops->unpreserve(&args);
+		if (luo_file->retrieve_status <= 0 && luo_file->fh->ops->unpreserve) {
+			args.handler = luo_file->fh;
+			args.file = luo_file->file;
+			args.serialized_data = luo_file->serialized_data;
+			args.private_data = luo_file->private_data;
+			luo_file->fh->ops->unpreserve(&args);
+		}
 		luo_flb_file_unpreserve(luo_file->fh);
 
 		xa_erase(&luo_preserved_files,
@@ -413,6 +415,9 @@ static void __luo_file_unfreeze(struct luo_file_set *file_set,
 		if (luo_file == failed_entry)
 			break;
 
+		if (luo_file->retrieve_status > 0)
+			continue;
+
 		luo_file_unfreeze_one(file_set, luo_file);
 	}
 
@@ -457,6 +462,7 @@ int luo_file_freeze(struct luo_file_set *file_set,
 {
 	struct luo_file *luo_file;
 	struct kho_block_set_it it;
+	u64 count = 0;
 	int err;
 
 	if (!file_set->count)
@@ -465,7 +471,12 @@ int luo_file_freeze(struct luo_file_set *file_set,
 	kho_block_set_it_init(&it, &file_set->block_set);
 
 	list_for_each_entry(luo_file, &file_set->files_list, list) {
-		struct luo_file_ser *file_ser = kho_block_set_it_reserve_entry(&it);
+		struct luo_file_ser *file_ser;
+
+		if (luo_file->retrieve_status > 0)
+			continue;
+
+		file_ser = kho_block_set_it_reserve_entry(&it);
 
 		/* This should not fail normally as blocks were pre-allocated */
 		if (WARN_ON_ONCE(!file_ser)) {
@@ -485,10 +496,11 @@ int luo_file_freeze(struct luo_file_set *file_set,
 			sizeof(file_ser->compatible));
 		file_ser->data = luo_file->serialized_data;
 		file_ser->token = luo_file->token;
+		count++;
 	}
 
-	file_set_ser->count = file_set->count;
-	file_set_ser->files = kho_block_set_head_pa(&file_set->block_set);
+	file_set_ser->count = count;
+	file_set_ser->files = count ? kho_block_set_head_pa(&file_set->block_set) : 0;
 
 	return 0;
 
@@ -583,6 +595,27 @@ int luo_retrieve_file(struct luo_file_set *file_set, u64 token,
 		 */
 		get_file(luo_file->file);
 		*filep = luo_file->file;
+		return 0;
+	}
+
+	/*
+	 * Pre-kexec case: the file was preserved in the current kernel, so
+	 * luo_file->file holds the live struct file *. Unpreserve any KHO
+	 * state and return a reference to the existing file.
+	 */
+	if (luo_file->file) {
+		if (luo_file->fh->ops->unpreserve) {
+			args.handler = luo_file->fh;
+			args.file = luo_file->file;
+			args.serialized_data = luo_file->serialized_data;
+			args.private_data = luo_file->private_data;
+			luo_file->fh->ops->unpreserve(&args);
+		}
+		luo_file->serialized_data = 0;
+		luo_file->private_data = NULL;
+		get_file(luo_file->file);
+		*filep = luo_file->file;
+		luo_file->retrieve_status = 1;
 		return 0;
 	}
 
