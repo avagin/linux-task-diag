@@ -1,0 +1,45 @@
+From 7a086be3a42ed3ed3e1328096fe20e4c0999fc85 Mon Sep 17 00:00:00 2001
+From: Andrei Vagin <avagin@google.com>
+Date: Sat, 19 Sep 2026 01:37:58 +0000
+Subject: [PATCH 0/2] x86/fpu: Allow restoring signal frames with larger xstate_size
+
+This series is a follow-up to "x86/fpu: Restore and reinforce signal
+frame portability". While the previous series enabled restoring signal
+frames created on machines with fewer xstate features (shrunk
+xstate_size), the kernel still enforced that a signal frame's
+xstate_size must not exceed the current task's fpstate->user_size.
+
+This restriction prevents migrating a process from a CPU with more
+enabled xstate features to a CPU with fewer features, even when the
+process has not actively used any of the unsupported features. Because
+the actual set of active features is recorded in the XSAVE header
+(XSTATE_BV) and validated during restoration, a larger xstate_size is
+safe to restore as long as all active features are supported by the
+destination CPU and the buffer is large enough for the intersection of
+frame and task features.
+
+Patch 1 relaxes the upper-bound check in check_xstate_in_sigframe() and
+updates Documentation/arch/x86/xstate.rst accordingly.
+Patch 2 extends the sigframe_fpu_portability selftest with valid and
+invalid test cases for larger xstate_size frames.
+
+Cc: Alexander Mikhalitsyn <alexander@mihalicyn.com>
+Cc: Borislav Petkov <bp@alien8.de>
+Cc: "Chang S. Bae" <chang.seok.bae@intel.com>
+Cc: Dave Hansen <dave.hansen@linux.intel.com>
+Cc: "H. Peter Anvin" <hpa@zytor.com>
+Cc: Ingo Molnar <mingo@redhat.com>
+Cc: Thomas Gleixner <tglx@kernel.org>
+
+Andrei Vagin (2):
+  x86/fpu: Allow restoring signal frames with larger xstate_size
+  selftests/x86: Check restoring FPU state with larger xstate_size
+
+ Documentation/arch/x86/xstate.rst             |  10 +-
+ arch/x86/kernel/fpu/signal.c                  |  17 +-
+ .../selftests/x86/sigframe_fpu_portability.c  | 195 +++++++++++++-----
+ 3 files changed, 169 insertions(+), 53 deletions(-)
+
+-- 
+2.55.0.1082.g2b9226bbc0-goog
+
