@@ -30,6 +30,14 @@
  * - test_invalid_shrunk_xstate_size:
  *   Verifies that the kernel rejects a frame if xstate_size is too small for
  *   the features enabled in xfeatures.
+ *
+ * - test_valid_larger_xstate_size:
+ *   Verifies that the kernel restores state from a frame with xstate_size
+ *   larger than the current task's size, if no unsupported features are active.
+ *
+ * - test_invalid_larger_xstate_size:
+ *   Verifies that the kernel rejects a frame with a larger xstate_size if it
+ *   contains unsupported features in the xsave header.
  */
 
 #define SIGFRAME_XSTATE_HDR_OFFSET	512
@@ -103,6 +111,72 @@ static void write_ymm0(uint64_t *v)
 	asm volatile ("vmovdqu %0, %%ymm0" : : "m"  (*(char (*)[32])v));
 }
 
+static sigjmp_buf segv_jmpbuf;
+
+static void handle_segv(int sig, siginfo_t *si, void *ucp)
+{
+	siglongjmp(segv_jmpbuf, 1);
+}
+
+static void run_valid_sigframe_test(void (*handler)(int, siginfo_t *, void *),
+				    const char *desc)
+{
+	uint64_t v[4] = {0, 0, 0, 0};
+
+	sig_err_buf[0] = 0;
+	sethandler(SIGUSR1, handler, 0);
+
+	v[0] = 0x1111111111111111ULL;
+	v[1] = 0x2222222222222222ULL;
+	v[2] = 0x3333333333333333ULL;
+	v[3] = 0x4444444444444444ULL;
+	write_ymm0(v);
+
+	raw_raise(SIGUSR1);
+	v[0] = v[1] = v[2] = v[3] = 0;
+	read_ymm0(v);
+
+	if (sig_err_buf[0])
+		ksft_test_result_fail("%s\n", sig_err_buf);
+	else if (v[2] == TEST_YMMH_VAL && v[3] == (TEST_YMMH_VAL + 1))
+		ksft_test_result_pass("%s\n", desc);
+	else
+		ksft_test_result_fail(
+				"Got upper bits: 0x%lx 0x%lx (expected %lx %lx)\n",
+			       v[2], v[3], TEST_YMMH_VAL, TEST_YMMH_VAL + 1);
+
+	clearhandler(SIGUSR1);
+}
+
+static void run_invalid_sigframe_test(void (*handler)(int, siginfo_t *, void *),
+				      const char *desc)
+{
+	uint64_t v[4] = {0, 0, 0, 0};
+
+	sig_err_buf[0] = 0;
+	sethandler(SIGUSR1, handler, 0);
+	sethandler(SIGSEGV, handle_segv, 0);
+
+	if (sigsetjmp(segv_jmpbuf, 1) == 0) {
+		v[0] = 0x1111111111111111ULL;
+		v[1] = 0x2222222222222222ULL;
+		v[2] = 0x3333333333333333ULL;
+		v[3] = 0x4444444444444444ULL;
+		write_ymm0(v);
+
+		raw_raise(SIGUSR1);
+		sig_print("Invalid frame was NOT rejected\n");
+	}
+
+	clearhandler(SIGUSR1);
+	clearhandler(SIGSEGV);
+
+	if (sig_err_buf[0])
+		ksft_test_result_fail("%s\n", sig_err_buf);
+	else
+		ksft_test_result_pass("%s\n", desc);
+}
+
 static void __handle_shrunk_xstate_size(int sig, siginfo_t *si, void *ucp, bool valid_size)
 {
 	ucontext_t *uc = ucp;
@@ -166,72 +240,97 @@ static void handle_invalid_shrunk_xstate_size(int sig, siginfo_t *si, void *ucp)
 
 static void test_valid_shrunk_xstate_size(void)
 {
-	uint64_t v[4] = {0, 0, 0, 0};
-
-	sig_err_buf[0] = 0;
-	sethandler(SIGUSR1, handle_valid_shrunk_xstate_size, 0);
-
-	v[0] = 0x1111111111111111ULL;
-	v[1] = 0x2222222222222222ULL;
-	v[2] = 0x3333333333333333ULL;
-	v[3] = 0x4444444444444444ULL;
-	write_ymm0(v);
-
-	raw_raise(SIGUSR1);
-	v[0] = v[1] = v[2] = v[3] = 0;
-	read_ymm0(v);
-
-	if (sig_err_buf[0])
-		ksft_test_result_fail("%s\n", sig_err_buf);
-	else if (v[2] == TEST_YMMH_VAL && v[3] == (TEST_YMMH_VAL + 1))
-		ksft_test_result_pass("YMM state restored correctly from shrunk frame\n");
-	else
-		ksft_test_result_fail(
-				"Got upper bits: 0x%lx 0x%lx (expected %lx %lx)\n",
-			       v[2], v[3], TEST_YMMH_VAL, TEST_YMMH_VAL + 1);
-
-	clearhandler(SIGUSR1);
-}
-
-static sigjmp_buf segv_jmpbuf;
-
-static void handle_segv(int sig, siginfo_t *si, void *ucp)
-{
-	siglongjmp(segv_jmpbuf, 1);
+	run_valid_sigframe_test(handle_valid_shrunk_xstate_size,
+				"YMM state restored correctly from shrunk frame");
 }
 
 static void test_invalid_shrunk_xstate_size(void)
 {
-	uint64_t v[4] = {0, 0, 0, 0};
+	run_invalid_sigframe_test(handle_invalid_shrunk_xstate_size,
+				  "Inconsistent shrunk xstate_size correctly rejected");
+}
 
-	sig_err_buf[0] = 0;
-	sethandler(SIGUSR1, handle_invalid_shrunk_xstate_size, 0);
-	sethandler(SIGSEGV, handle_segv, 0);
+static char fpu_buffer[8192] __attribute__((aligned(64)));
+#define UNSUPPORTED_XFEATURE (1ULL << 62)
 
-	if (sigsetjmp(segv_jmpbuf, 1) == 0) {
-		v[0] = 0x1111111111111111ULL;
-		v[1] = 0x2222222222222222ULL;
-		v[2] = 0x3333333333333333ULL;
-		v[3] = 0x4444444444444444ULL;
-		write_ymm0(v);
+static void __handle_larger_xstate_size(int sig, siginfo_t *si, void *ucp, bool valid_xfeatures)
+{
+	ucontext_t *uc = ucp;
+	void *fp = uc->uc_mcontext.fpregs;
+	struct _fpx_sw_bytes *sw;
+	size_t copy_size;
+	uint64_t *ymmh_p, xfeatures;
+	struct xsave_buffer *xbuf;
 
-		raw_raise(SIGUSR1);
-		sig_print("Inconsistent size was NOT rejected\n");
+	if (!fp) {
+		sig_print("fpregs is NULL\n");
+		return;
 	}
 
-	clearhandler(SIGUSR1);
-	clearhandler(SIGSEGV);
+	sw = get_fpx_sw_bytes(fp);
+	if (sw->magic1 != FP_XSTATE_MAGIC1) {
+		sig_print("magic1 is not valid\n");
+		return;
+	}
 
-	if (sig_err_buf[0])
-		ksft_test_result_fail("%s\n", sig_err_buf);
-	else
-		ksft_test_result_pass("Inconsistent size correctly rejected\n");
+	copy_size = sw->xstate_size;
+	if (copy_size + 64 + FP_XSTATE_MAGIC2_SIZE > sizeof(fpu_buffer)) {
+		sig_print("fpu_buffer is too small\n");
+		return;
+	}
+
+	memset(fpu_buffer, 0, sizeof(fpu_buffer));
+	memcpy(fpu_buffer, fp, copy_size);
+
+	xbuf = (struct xsave_buffer *)fpu_buffer;
+	sw = get_fpx_sw_bytes(fpu_buffer);
+
+	sw->xstate_size += 64;
+	sw->extended_size += 64;
+	xfeatures = get_fpx_sw_bytes_features(fpu_buffer);
+	set_fpx_sw_bytes_features(fpu_buffer, xfeatures | UNSUPPORTED_XFEATURE);
+
+	*(uint32_t *)(fpu_buffer + sw->xstate_size) = FP_XSTATE_MAGIC2;
+
+	if (!valid_xfeatures) {
+		xfeatures = get_xstatebv(xbuf);
+		set_xstatebv(xbuf, xfeatures | UNSUPPORTED_XFEATURE);
+	}
+
+	ymmh_p = (uint64_t *)(fpu_buffer + ymm_offset);
+	ymmh_p[0] = TEST_YMMH_VAL;
+	ymmh_p[1] = TEST_YMMH_VAL + 1;
+
+	/* Update fpregs to point to the new buffer */
+	uc->uc_mcontext.fpregs = (fpregset_t)fpu_buffer;
+}
+
+static void handle_valid_larger_xstate_size(int sig, siginfo_t *si, void *ucp)
+{
+	__handle_larger_xstate_size(sig, si, ucp, true);
+}
+
+static void handle_invalid_larger_xstate_size(int sig, siginfo_t *si, void *ucp)
+{
+	__handle_larger_xstate_size(sig, si, ucp, false);
+}
+
+static void test_valid_larger_xstate_size(void)
+{
+	run_valid_sigframe_test(handle_valid_larger_xstate_size,
+				"YMM state restored correctly from larger frame");
+}
+
+static void test_invalid_larger_xstate_size(void)
+{
+	run_invalid_sigframe_test(handle_invalid_larger_xstate_size,
+				  "Unsupported feature in larger frame correctly rejected");
 }
 
 int main(void)
 {
 	ksft_print_header();
-	ksft_set_plan(2);
+	ksft_set_plan(4);
 
 	self_pid = getpid();
 
@@ -239,6 +338,8 @@ int main(void)
 
 	test_valid_shrunk_xstate_size();
 	test_invalid_shrunk_xstate_size();
+	test_valid_larger_xstate_size();
+	test_invalid_larger_xstate_size();
 
 	ksft_finished();
 	return 0;
