@@ -619,6 +619,8 @@ static void early_init_amd(struct cpuinfo_x86 *c)
 {
 	u64 val;
 
+	this_cpu_write(msr_misc_features_shadow, 0);
+
 	if (c->x86 >= 0xf)
 		set_cpu_cap(c, X86_FEATURE_K8);
 
