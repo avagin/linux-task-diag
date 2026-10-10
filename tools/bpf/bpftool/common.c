@@ -1174,6 +1174,7 @@ const char *bpf_attach_type_input_str(enum bpf_attach_type t)
 	case BPF_CGROUP_INET_SOCK_RELEASE:	return "sock_release";
 	case BPF_CGROUP_SOCK_OPS:		return "sock_ops";
 	case BPF_CGROUP_DEVICE:			return "device";
+	case BPF_CGROUP_CPUID:			return "cpuid";
 	case BPF_CGROUP_INET4_BIND:		return "bind4";
 	case BPF_CGROUP_INET6_BIND:		return "bind6";
 	case BPF_CGROUP_INET4_CONNECT:		return "connect4";

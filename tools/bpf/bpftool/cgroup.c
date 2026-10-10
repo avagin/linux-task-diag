@@ -49,6 +49,7 @@ static const int cgroup_attach_types[] = {
 	BPF_CGROUP_UNIX_RECVMSG,
 	BPF_CGROUP_SOCK_OPS,
 	BPF_CGROUP_DEVICE,
+	BPF_CGROUP_CPUID,
 	BPF_CGROUP_SYSCTL,
 	BPF_CGROUP_GETSOCKOPT,
 	BPF_CGROUP_SETSOCKOPT,
@@ -61,7 +62,7 @@ static const int cgroup_attach_types[] = {
 #define HELP_SPEC_ATTACH_TYPES						\
 	"       ATTACH_TYPE := { cgroup_inet_ingress | cgroup_inet_egress |\n" \
 	"                        cgroup_inet_sock_create | cgroup_sock_ops |\n" \
-	"                        cgroup_device | cgroup_inet4_bind |\n" \
+	"                        cgroup_device | cgroup_cpuid | cgroup_inet4_bind |\n" \
 	"                        cgroup_inet6_bind | cgroup_inet4_post_bind |\n" \
 	"                        cgroup_inet6_post_bind | cgroup_inet4_connect |\n" \
 	"                        cgroup_inet6_connect | cgroup_unix_connect |\n" \
