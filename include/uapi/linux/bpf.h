@@ -1159,6 +1159,7 @@ enum bpf_attach_type {
 	BPF_TRACE_FENTRY_MULTI,
 	BPF_TRACE_FEXIT_MULTI,
 	BPF_TRACE_FSESSION_MULTI,
+	BPF_CGROUP_CPUID,
 	__MAX_BPF_ATTACH_TYPE
 };
 
@@ -7395,6 +7396,15 @@ struct bpf_cgroup_dev_ctx {
 	__u32 access_type;
 	__u32 major;
 	__u32 minor;
+};
+
+struct bpf_cpuid {
+	__u32 eax_in;
+	__u32 ecx_in;
+	__u32 eax;
+	__u32 ebx;
+	__u32 ecx;
+	__u32 edx;
 };
 
 struct bpf_raw_tracepoint_args {

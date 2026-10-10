@@ -67,6 +67,9 @@ to_cgroup_bpf_attach_type(enum bpf_attach_type attach_type)
 	CGROUP_ATYPE(CGROUP_INET6_GETSOCKNAME);
 	CGROUP_ATYPE(CGROUP_UNIX_GETSOCKNAME);
 	CGROUP_ATYPE(CGROUP_INET_SOCK_RELEASE);
+#ifdef CONFIG_X86
+	CGROUP_ATYPE(CGROUP_CPUID);
+#endif
 	default:
 		return CGROUP_BPF_ATTACH_TYPE_INVALID;
 	}
@@ -186,6 +189,23 @@ static inline bool cgroup_bpf_sock_enabled(struct sock *sk,
 	array = rcu_access_pointer(cgrp->bpf.effective[type]);
 	return array != &bpf_empty_prog_array;
 }
+
+#ifdef CONFIG_X86
+int __cgroup_bpf_run_filter_cpuid(struct bpf_cpuid *ctx);
+
+static inline bool cgroup_bpf_cpuid_enabled(struct task_struct *tsk)
+{
+	struct cgroup *cgrp;
+	struct bpf_prog_array *array;
+
+	if (!cgroup_bpf_enabled(CGROUP_CPUID))
+		return false;
+
+	cgrp = task_dfl_cgroup(tsk);
+	array = rcu_access_pointer(cgrp->bpf.effective[CGROUP_CPUID]);
+	return array != &bpf_empty_prog_array;
+}
+#endif
 
 /* Wrappers for __cgroup_bpf_run_filter_skb() guarded by cgroup_bpf_enabled. */
 #define BPF_CGROUP_RUN_PROG_INET_INGRESS(sk, skb)			      \
@@ -480,6 +500,17 @@ static inline int bpf_percpu_cgroup_storage_update(struct bpf_map *map,
 }
 
 #define cgroup_bpf_enabled(atype) (0)
+#ifdef CONFIG_X86
+static inline int __cgroup_bpf_run_filter_cpuid(struct bpf_cpuid *ctx)
+{
+	return 0;
+}
+
+static inline bool cgroup_bpf_cpuid_enabled(struct task_struct *tsk)
+{
+	return false;
+}
+#endif
 #define BPF_CGROUP_RUN_SA_PROG_LOCK(sk, uaddr, uaddrlen, atype, t_ctx) ({ 0; })
 #define BPF_CGROUP_RUN_SA_PROG(sk, uaddr, uaddrlen, atype) ({ 0; })
 #define BPF_CGROUP_PRE_CONNECT_ENABLED(sk) (0)

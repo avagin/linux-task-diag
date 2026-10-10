@@ -6219,6 +6219,9 @@ bool btf_is_prog_ctx_type(struct bpf_verifier_log *log, const struct btf *btf,
 		bpf_log(log, "arg#%d struct doesn't have a name\n", arg);
 		return false;
 	}
+	if (prog_type == BPF_PROG_TYPE_CGROUP_DEVICE &&
+	    strcmp(tname, "bpf_cpuid") == 0)
+		return true;
 
 	ctx_type = find_canonical_prog_ctx_type(prog_type);
 	if (!ctx_type) {
@@ -6309,6 +6312,16 @@ static int btf_validate_prog_ctx_type(struct bpf_verifier_log *log, const struct
 
 	/* special cases */
 	switch (prog_type) {
+	case BPF_PROG_TYPE_CGROUP_DEVICE:
+#ifdef CONFIG_X86
+		if (attach_type == BPF_CGROUP_CPUID) {
+			if (__btf_type_is_struct(t) && strcmp(tname, "bpf_cpuid") == 0)
+				return 0;
+			bpf_log(log, "arg#%d should be `struct bpf_cpuid *`\n", arg);
+			return -EINVAL;
+		}
+#endif
+		break;
 	case BPF_PROG_TYPE_KPROBE:
 		if (__btf_type_is_struct(t) && strcmp(tname, "pt_regs") == 0)
 			return 0;

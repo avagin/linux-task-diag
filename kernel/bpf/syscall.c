@@ -2733,6 +2733,10 @@ static void bpf_prog_load_fixup_attach_type(union bpf_attr *attr)
 			attr->expected_attach_type =
 				BPF_CGROUP_INET_SOCK_CREATE;
 		break;
+	case BPF_PROG_TYPE_CGROUP_DEVICE:
+		if (!attr->expected_attach_type)
+			attr->expected_attach_type = BPF_CGROUP_DEVICE;
+		break;
 	case BPF_PROG_TYPE_SK_REUSEPORT:
 		if (!attr->expected_attach_type)
 			attr->expected_attach_type =
@@ -2782,6 +2786,16 @@ bpf_prog_load_check_attach(enum bpf_prog_type prog_type,
 		return -EINVAL;
 
 	switch (prog_type) {
+	case BPF_PROG_TYPE_CGROUP_DEVICE:
+		switch (expected_attach_type) {
+		case BPF_CGROUP_DEVICE:
+#ifdef CONFIG_X86
+		case BPF_CGROUP_CPUID:
+#endif
+			return 0;
+		default:
+			return -EINVAL;
+		}
 	case BPF_PROG_TYPE_CGROUP_SOCK:
 		switch (expected_attach_type) {
 		case BPF_CGROUP_INET_SOCK_CREATE:
@@ -4444,6 +4458,9 @@ attach_type_to_prog_type(enum bpf_attach_type attach_type)
 	case BPF_CGROUP_SOCK_OPS:
 		return BPF_PROG_TYPE_SOCK_OPS;
 	case BPF_CGROUP_DEVICE:
+#ifdef CONFIG_X86
+	case BPF_CGROUP_CPUID:
+#endif
 		return BPF_PROG_TYPE_CGROUP_DEVICE;
 	case BPF_SK_MSG_VERDICT:
 		return BPF_PROG_TYPE_SK_MSG;
@@ -4494,6 +4511,7 @@ static int bpf_prog_attach_check_attach_type(const struct bpf_prog *prog,
 	enum bpf_prog_type ptype;
 
 	switch (prog->type) {
+	case BPF_PROG_TYPE_CGROUP_DEVICE:
 	case BPF_PROG_TYPE_CGROUP_SOCK:
 	case BPF_PROG_TYPE_CGROUP_SOCK_ADDR:
 	case BPF_PROG_TYPE_CGROUP_SOCKOPT:
@@ -4768,6 +4786,9 @@ static int bpf_prog_query(const union bpf_attr *attr,
 	case BPF_CGROUP_UNIX_RECVMSG:
 	case BPF_CGROUP_SOCK_OPS:
 	case BPF_CGROUP_DEVICE:
+#ifdef CONFIG_X86
+	case BPF_CGROUP_CPUID:
+#endif
 	case BPF_CGROUP_SYSCTL:
 	case BPF_CGROUP_GETSOCKOPT:
 	case BPF_CGROUP_SETSOCKOPT:

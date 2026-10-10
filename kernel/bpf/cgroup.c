@@ -18,6 +18,9 @@
 #include <linux/bpf_verifier.h>
 #include <net/sock.h>
 #include <net/bpf_sk_storage.h>
+#ifdef CONFIG_X86
+#include <linux/cpufeature.h>
+#endif
 
 #include "../cgroup/cgroup-internal.h"
 
@@ -838,6 +841,10 @@ static int __cgroup_bpf_attach(struct cgroup *cgrp,
 	atype = bpf_cgroup_atype_find(type, new_prog->aux->attach_btf_id);
 	if (atype < 0)
 		return -EINVAL;
+#ifdef CONFIG_X86
+	if (atype == CGROUP_CPUID && !cpu_feature_enabled(X86_FEATURE_CPUID_FAULT))
+		return -EOPNOTSUPP;
+#endif
 	if (revision && revision != cgrp->bpf.revisions[atype])
 		return -ESTALE;
 
@@ -1067,6 +1074,9 @@ static int __cgroup_bpf_replace(struct cgroup *cgrp,
 	progs = &cgrp->bpf.progs[atype];
 
 	if (link->link.prog->type != new_prog->type)
+		return -EINVAL;
+	if (new_prog->type == BPF_PROG_TYPE_CGROUP_DEVICE &&
+	    link->link.attach_type != new_prog->expected_attach_type)
 		return -EINVAL;
 
 	hlist_for_each_entry(pl, progs, node) {
@@ -1812,6 +1822,22 @@ int __cgroup_bpf_check_dev_permission(short dev_type, u32 major, u32 minor,
 	return ret;
 }
 
+#ifdef CONFIG_X86
+int __cgroup_bpf_run_filter_cpuid(struct bpf_cpuid *ctx)
+{
+	struct cgroup *cgrp;
+	int ret;
+
+	rcu_read_lock();
+	cgrp = task_dfl_cgroup(current);
+	ret = bpf_prog_run_array_cg(&cgrp->bpf, CGROUP_CPUID, ctx,
+				    bpf_prog_run, 0, NULL);
+	rcu_read_unlock();
+
+	return ret;
+}
+#endif
+
 BPF_CALL_2(bpf_get_local_storage, struct bpf_map *, map, u64, flags)
 {
 	/* flags argument is not used now,
@@ -1890,12 +1916,44 @@ cgroup_dev_func_proto(enum bpf_func_id func_id, const struct bpf_prog *prog)
 	}
 }
 
+#ifdef CONFIG_X86
+static bool cgroup_cpuid_is_valid_access(int off, int size,
+					 enum bpf_access_type type,
+					 struct bpf_insn_access_aux *info)
+{
+	const int size_default = sizeof(__u32);
+
+	if (off < 0 || off + size > sizeof(struct bpf_cpuid))
+		return false;
+	/* The verifier guarantees that size > 0. */
+	if (off % size != 0)
+		return false;
+
+	switch (off) {
+	case bpf_ctx_range(struct bpf_cpuid, eax_in):
+	case bpf_ctx_range(struct bpf_cpuid, ecx_in):
+		if (type == BPF_WRITE)
+			return false;
+		bpf_ctx_record_field_size(info, size_default);
+		return bpf_ctx_narrow_access_ok(off, size, size_default);
+	default:
+		bpf_ctx_record_field_size(info, size_default);
+		return bpf_ctx_narrow_access_ok(off, size, size_default);
+	}
+}
+#endif
+
 static bool cgroup_dev_is_valid_access(int off, int size,
 				       enum bpf_access_type type,
 				       const struct bpf_prog *prog,
 				       struct bpf_insn_access_aux *info)
 {
 	const int size_default = sizeof(__u32);
+
+#ifdef CONFIG_X86
+	if (prog->expected_attach_type == BPF_CGROUP_CPUID)
+		return cgroup_cpuid_is_valid_access(off, size, type, info);
+#endif
 
 	if (type == BPF_WRITE)
 		return false;
@@ -2793,6 +2851,9 @@ cgroup_common_func_proto(enum bpf_func_id func_id, const struct bpf_prog *prog)
 		case BPF_CGROUP_INET4_GETSOCKNAME:
 		case BPF_CGROUP_INET6_GETSOCKNAME:
 		case BPF_CGROUP_UNIX_GETSOCKNAME:
+#ifdef CONFIG_X86
+		case BPF_CGROUP_CPUID:
+#endif
 			return NULL;
 		default:
 			return &bpf_get_retval_proto;
@@ -2811,6 +2872,9 @@ cgroup_common_func_proto(enum bpf_func_id func_id, const struct bpf_prog *prog)
 		case BPF_CGROUP_INET4_GETSOCKNAME:
 		case BPF_CGROUP_INET6_GETSOCKNAME:
 		case BPF_CGROUP_UNIX_GETSOCKNAME:
+#ifdef CONFIG_X86
+		case BPF_CGROUP_CPUID:
+#endif
 			return NULL;
 		default:
 			return &bpf_set_retval_proto;
