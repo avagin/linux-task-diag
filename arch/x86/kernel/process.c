@@ -344,14 +344,17 @@ DEFINE_PER_CPU(u64, msr_misc_features_shadow);
 
 static void set_cpuid_faulting(bool on)
 {
+	u64 msrval;
+
+	msrval = this_cpu_read(msr_misc_features_shadow);
+	if (!!(msrval & MSR_MISC_FEATURES_ENABLES_CPUID_FAULT) == on)
+		return;
+
+	msrval &= ~MSR_MISC_FEATURES_ENABLES_CPUID_FAULT;
+	msrval |= (on << MSR_MISC_FEATURES_ENABLES_CPUID_FAULT_BIT);
+	this_cpu_write(msr_misc_features_shadow, msrval);
 
 	if (boot_cpu_data.x86_vendor == X86_VENDOR_INTEL) {
-		u64 msrval;
-
-		msrval = this_cpu_read(msr_misc_features_shadow);
-		msrval &= ~MSR_MISC_FEATURES_ENABLES_CPUID_FAULT;
-		msrval |= (on << MSR_MISC_FEATURES_ENABLES_CPUID_FAULT_BIT);
-		this_cpu_write(msr_misc_features_shadow, msrval);
 		wrmsrq(MSR_MISC_FEATURES_ENABLES, msrval);
 	} else if (boot_cpu_data.x86_vendor == X86_VENDOR_AMD) {
 		if (on)
