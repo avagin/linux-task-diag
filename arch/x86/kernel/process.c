@@ -385,10 +385,42 @@ static void enable_cpuid(void)
 		 * Must flip the CPU state synchronously with
 		 * TIF_NOCPUID in the current running context.
 		 */
-		set_cpuid_faulting(false);
+		set_cpuid_faulting(cgroup_bpf_cpuid_enabled(current));
 	}
 	preempt_enable();
 }
+
+#ifdef CONFIG_CGROUP_BPF
+static void _update_task_cpuid_faulting(void *task)
+{
+	if (!task || task == current)
+		set_cpuid_faulting(test_thread_flag(TIF_NOCPUID) ||
+				   cgroup_bpf_cpuid_enabled(current));
+}
+
+void arch_sync_cpuid_faulting(struct task_struct *task)
+{
+	if (!cpu_feature_enabled(X86_FEATURE_CPUID_FAULT))
+		return;
+
+	if (!task) {
+		on_each_cpu(_update_task_cpuid_faulting, NULL, 1);
+		return;
+	}
+
+	preempt_disable();
+	if (task == current) {
+		_update_task_cpuid_faulting(task);
+		preempt_enable();
+		return;
+	}
+	preempt_enable();
+
+	if (IS_ENABLED(CONFIG_SMP) && task_curr(task))
+		smp_call_function_single(task_cpu(task),
+					 _update_task_cpuid_faulting, task, 1);
+}
+#endif
 
 static int get_cpuid_mode(void)
 {
@@ -743,8 +775,9 @@ void __switch_to_xtra(struct task_struct *prev_p, struct task_struct *next_p)
 	if ((tifp ^ tifn) & _TIF_NOTSC)
 		cr4_toggle_bits_irqsoff(X86_CR4_TSD);
 
-	if ((tifp ^ tifn) & _TIF_NOCPUID)
-		set_cpuid_faulting(!!(tifn & _TIF_NOCPUID));
+	if (((tifp ^ tifn) & _TIF_NOCPUID) || cgroup_bpf_enabled(CGROUP_CPUID))
+		set_cpuid_faulting((tifn & _TIF_NOCPUID) ||
+				   cgroup_bpf_cpuid_enabled(next_p));
 
 	if (likely(!((tifp | tifn) & _TIF_SPEC_FORCE_UPDATE))) {
 		__speculation_ctrl_update(tifp, tifn);

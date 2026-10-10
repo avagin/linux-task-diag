@@ -2,6 +2,7 @@
 //
 // Code shared between 32 and 64 bit
 
+#include <linux/bpf-cgroup.h>
 #include <asm/spec-ctrl.h>
 
 void __switch_to_xtra(struct task_struct *prev_p, struct task_struct *next_p);
@@ -34,6 +35,7 @@ static inline void switch_to_extra(struct task_struct *prev,
 	 * speculation mitigations etc.
 	 */
 	if (unlikely(next_tif & _TIF_WORK_CTXSW_NEXT ||
-		     prev_tif & _TIF_WORK_CTXSW_PREV))
+		     prev_tif & _TIF_WORK_CTXSW_PREV ||
+		     cgroup_bpf_enabled(CGROUP_CPUID)))
 		__switch_to_xtra(prev, next);
 }

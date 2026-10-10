@@ -192,6 +192,7 @@ static inline bool cgroup_bpf_sock_enabled(struct sock *sk,
 
 #ifdef CONFIG_X86
 int __cgroup_bpf_run_filter_cpuid(struct bpf_cpuid *ctx);
+void arch_sync_cpuid_faulting(struct task_struct *task);
 
 static inline bool cgroup_bpf_cpuid_enabled(struct task_struct *tsk)
 {

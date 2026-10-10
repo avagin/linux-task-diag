@@ -44,6 +44,7 @@
 #include <linux/atomic.h>
 #include <linux/iommu.h>
 #include <linux/ubsan.h>
+#include <linux/bpf-cgroup.h>
 
 #include <asm/stacktrace.h>
 #include <asm/processor.h>
@@ -56,6 +57,7 @@
 #include <asm/fred.h>
 #include <asm/fpu/api.h>
 #include <asm/cpu.h>
+#include <asm/cpuid/api.h>
 #include <asm/cpu_entry_area.h>
 #include <asm/mce.h>
 #include <asm/fixmap.h>
@@ -911,6 +913,47 @@ static void gp_user_force_sig_segv(struct pt_regs *regs, int trapnr,
 	force_sig(SIGSEGV);
 }
 
+static bool fixup_cpuid_exception(struct pt_regs *regs)
+{
+	unsigned char buf[MAX_INSN_SIZE];
+	struct bpf_cpuid ctx;
+	struct insn insn;
+	int nr_copied;
+
+	if (!IS_ENABLED(CONFIG_CGROUP_BPF) ||
+	    !cpu_feature_enabled(X86_FEATURE_CPUID_FAULT) ||
+	    test_thread_flag(TIF_NOCPUID))
+		return false;
+
+	nr_copied = insn_fetch_from_user(regs, buf);
+	if (nr_copied <= 0)
+		return false;
+
+	if (!insn_decode_from_regs(&insn, regs, buf, nr_copied))
+		return false;
+
+	/* CPUID instruction opcode is 0f a2 */
+	if (insn.opcode.nbytes != 2 ||
+	    insn.opcode.bytes[0] != 0x0f ||
+	    insn.opcode.bytes[1] != 0xa2)
+		return false;
+
+	ctx.eax_in = regs->ax;
+	ctx.ecx_in = regs->cx;
+	cpuid_count(ctx.eax_in, ctx.ecx_in,
+		    &ctx.eax, &ctx.ebx, &ctx.ecx, &ctx.edx);
+
+	if (__cgroup_bpf_run_filter_cpuid(&ctx))
+		return false;
+
+	regs->ax = ctx.eax;
+	regs->bx = ctx.ebx;
+	regs->cx = ctx.ecx;
+	regs->dx = ctx.edx;
+	regs->ip += insn.length;
+	return true;
+}
+
 DEFINE_IDTENTRY_ERRORCODE(exc_general_protection)
 {
 	char desc[sizeof(GPFSTR) + 50 + 2*sizeof(unsigned long) + 1] = GPFSTR;
@@ -930,6 +973,9 @@ DEFINE_IDTENTRY_ERRORCODE(exc_general_protection)
 	}
 
 	if (user_mode(regs)) {
+		if (!error_code && fixup_cpuid_exception(regs))
+			goto exit;
+
 		if (fixup_iopl_exception(regs))
 			goto exit;
 

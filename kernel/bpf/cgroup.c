@@ -52,10 +52,32 @@ static struct notifier_block cgroup_bpf_lifetime_nb = {
 	.notifier_call = cgroup_bpf_lifetime_notify,
 };
 
+#ifdef CONFIG_X86
+static int cgroup_bpf_task_notify(struct notifier_block *nb,
+				  unsigned long action, void *data)
+{
+	struct cgroup_task_migrate_ctx *ctx = data;
+
+	if (action == CGROUP_TASK_MIGRATED &&
+	    cgroup_bpf_enabled(CGROUP_CPUID))
+		arch_sync_cpuid_faulting(ctx->task);
+
+	return NOTIFY_OK;
+}
+
+static struct notifier_block cgroup_bpf_task_nb = {
+	.notifier_call = cgroup_bpf_task_notify,
+};
+#endif
+
 void __init cgroup_bpf_lifetime_notifier_init(void)
 {
 	BUG_ON(blocking_notifier_chain_register(&cgroup_lifetime_notifier,
 						&cgroup_bpf_lifetime_nb));
+#ifdef CONFIG_X86
+	WARN_ON_ONCE(blocking_notifier_chain_register(&cgroup_task_notifier,
+						      &cgroup_bpf_task_nb));
+#endif
 }
 
 #ifdef CONFIG_BPF_LSM
@@ -917,6 +939,10 @@ static int __cgroup_bpf_attach(struct cgroup *cgrp,
 		static_branch_inc(&cgroup_bpf_enabled_key[atype]);
 	}
 	bpf_cgroup_storages_link(new_storage, cgrp, type);
+#ifdef CONFIG_X86
+	if (atype == CGROUP_CPUID)
+		arch_sync_cpuid_faulting(NULL);
+#endif
 	return 0;
 
 cleanup_trampoline:
@@ -1264,6 +1290,10 @@ static int __cgroup_bpf_detach(struct cgroup *cgrp, struct bpf_prog *prog,
 		bpf_prog_put(old_prog);
 	}
 	static_branch_dec(&cgroup_bpf_enabled_key[atype]);
+#ifdef CONFIG_X86
+	if (atype == CGROUP_CPUID)
+		arch_sync_cpuid_faulting(NULL);
+#endif
 	return 0;
 }
 
