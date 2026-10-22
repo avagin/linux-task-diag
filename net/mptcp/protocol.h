@@ -935,6 +935,12 @@ void mptcp_get_options(const struct sk_buff *skb,
 void mptcp_finish_connect(struct sock *sk);
 void __mptcp_sync_state(struct sock *sk, int state);
 void mptcp_reset_tout_timer(struct mptcp_sock *msk, unsigned long fail_tout);
+void mptcp_reset_rtx_timer(struct sock *sk);
+
+static inline bool mptcp_rtx_timer_pending(struct sock *sk)
+{
+	return timer_pending(&sk->mptcp_retransmit_timer);
+}
 
 static inline void mptcp_stop_tout_timer(struct sock *sk)
 {

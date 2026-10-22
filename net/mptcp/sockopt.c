@@ -1113,6 +1113,9 @@ static int mptcp_setsockopt_repair(struct mptcp_sock *msk, sockptr_t optval, uns
 					    TCPF_LAST_ACK | TCPF_CLOSING))) {
 			__mptcp_push_pending(sk, 0);
 			mptcp_check_send_data_fin(sk);
+			if (msk->snd_una != msk->snd_nxt &&
+			    !mptcp_rtx_timer_pending(sk))
+				mptcp_reset_rtx_timer(sk);
 		}
 	} else {
 		ret = -EINVAL;
@@ -1157,6 +1160,11 @@ static int mptcp_setsockopt_repair_keys(struct mptcp_sock *msk, sockptr_t optval
 	if (copy_from_sockptr(&keys, optval, sizeof(keys)))
 		return -EFAULT;
 
+	if (keys.flags & ~(MPTCP_KEY_FLAG_CSUM_ENABLED |
+			   MPTCP_KEY_FLAG_64BIT_ACK |
+			   MPTCP_KEY_FLAG_FALLBACK))
+		return -EINVAL;
+
 	lock_sock(sk);
 	if (!msk->repair) {
 		ret = -EPERM;
@@ -1173,8 +1181,12 @@ static int mptcp_setsockopt_repair_keys(struct mptcp_sock *msk, sockptr_t optval
 
 	WRITE_ONCE(msk->csum_enabled, !!(keys.flags & MPTCP_KEY_FLAG_CSUM_ENABLED));
 	WRITE_ONCE(msk->use_64bit_ack, !!(keys.flags & MPTCP_KEY_FLAG_64BIT_ACK));
-	if (keys.flags & MPTCP_KEY_FLAG_FALLBACK)
+	if (keys.flags & MPTCP_KEY_FLAG_FALLBACK) {
 		set_bit(MPTCP_FALLBACK_DONE, &msk->flags);
+		clear_bit(MPTCP_RTX_ENABLED, &msk->flags);
+	} else if (sk->sk_state != TCP_CLOSE) {
+		set_bit(MPTCP_RTX_ENABLED, &msk->flags);
+	}
 
 out:
 	release_sock(sk);
@@ -1194,6 +1206,19 @@ static int mptcp_setsockopt_repair_seq(struct mptcp_sock *msk, sockptr_t optval,
 	if (copy_from_sockptr(&seq, optval, sizeof(seq)))
 		return -EFAULT;
 
+	if (seq.flags & ~(MPTCP_SEQ_FLAG_RCV_DATA_FIN |
+			  MPTCP_SEQ_FLAG_SND_DATA_FIN_ENABLE |
+			  MPTCP_SEQ_FLAG_ALLOW_INFINITE_FALLBACK))
+		return -EINVAL;
+
+	if (seq.mptcp_state &&
+	    (seq.mptcp_state >= TCP_MAX_STATES ||
+	     !((1 << seq.mptcp_state) & (TCPF_ESTABLISHED | TCPF_CLOSE_WAIT |
+					 TCPF_FIN_WAIT1 | TCPF_FIN_WAIT2 |
+					 TCPF_LAST_ACK | TCPF_CLOSING |
+					 TCPF_CLOSE))))
+		return -EINVAL;
+
 	lock_sock(sk);
 	if (!msk->repair) {
 		ret = -EPERM;
@@ -1203,6 +1228,8 @@ static int mptcp_setsockopt_repair_seq(struct mptcp_sock *msk, sockptr_t optval,
 	WRITE_ONCE(msk->write_seq, seq.write_seq);
 	WRITE_ONCE(msk->snd_nxt, seq.snd_nxt);
 	WRITE_ONCE(msk->snd_una, seq.snd_una);
+	if (msk->first)
+		WRITE_ONCE(msk->wnd_end, msk->snd_una + tcp_sk(msk->first)->snd_wnd);
 	WRITE_ONCE(msk->ack_seq, seq.rcv_nxt);
 	atomic64_set(&msk->rcv_wnd_sent, seq.rcv_wnd_sent);
 	WRITE_ONCE(msk->rcv_data_fin_seq, seq.rcv_data_fin_seq);
@@ -1213,6 +1240,8 @@ static int mptcp_setsockopt_repair_seq(struct mptcp_sock *msk, sockptr_t optval,
 
 	if (seq.mptcp_state) {
 		mptcp_set_state(sk, seq.mptcp_state);
+		if (seq.mptcp_state != TCP_CLOSE && !__mptcp_check_fallback(msk))
+			set_bit(MPTCP_RTX_ENABLED, &msk->flags);
 		if (seq.mptcp_state == TCP_CLOSE_WAIT)
 			WRITE_ONCE(sk->sk_shutdown, sk->sk_shutdown | RCV_SHUTDOWN);
 		else if (seq.mptcp_state == TCP_FIN_WAIT1 || seq.mptcp_state == TCP_FIN_WAIT2)
@@ -1245,6 +1274,36 @@ static int mptcp_setsockopt_repair_subflow(struct mptcp_sock *msk, sockptr_t opt
 	if (copy_from_sockptr(&sf, optval, sizeof(sf)))
 		return -EFAULT;
 
+	if (sf.reserved || sf.reserved2)
+		return -EINVAL;
+
+	if (sf.flags & ~(MPTCP_SUBFLOW_REPAIR_FLAG_SACK_OK |
+			 MPTCP_SUBFLOW_REPAIR_FLAG_TIMESTAMPS |
+			 MPTCP_SUBFLOW_REPAIR_FLAG_BACKUP |
+			 MPTCP_SUBFLOW_REPAIR_FLAG_JOIN))
+		return -EINVAL;
+
+	if (sf.snd_wscale > TCP_MAX_WSCALE || sf.rcv_wscale > TCP_MAX_WSCALE)
+		return -EINVAL;
+
+	family = sf.addrs.sa_family;
+	if (family == AF_UNSPEC)
+		family = sf.addrs.sa_remote.sa_family;
+	if (family == AF_UNSPEC)
+		family = sk->sk_family;
+
+	if (family != AF_INET
+#if IS_ENABLED(CONFIG_MPTCP_IPV6)
+	    && family != AF_INET6
+#endif
+	   )
+		return -EAFNOSUPPORT;
+
+	if ((sf.addrs.sa_family != AF_UNSPEC && sf.addrs.sa_family != family) ||
+	    (sf.addrs.sa_remote.sa_family != AF_UNSPEC &&
+	     sf.addrs.sa_remote.sa_family != family))
+		return -EINVAL;
+
 	lock_sock(sk);
 	if (!msk->repair) {
 		err = -EPERM;
@@ -1253,12 +1312,6 @@ static int mptcp_setsockopt_repair_subflow(struct mptcp_sock *msk, sockptr_t opt
 
 	ssk = msk->first;
 	if (!ssk) {
-		family = sf.addrs.sa_family;
-		if (family == AF_UNSPEC)
-			family = sf.addrs.sa_remote.sa_family;
-		if (family == AF_UNSPEC)
-			family = sk->sk_family;
-
 		err = mptcp_subflow_create_socket(sk, family, &sf_sock);
 		if (err)
 			goto out_unlock;
@@ -1273,6 +1326,9 @@ static int mptcp_setsockopt_repair_subflow(struct mptcp_sock *msk, sockptr_t opt
 		WRITE_ONCE(subflow->local_id, 0);
 		mptcp_sock_graft(ssk, sk->sk_socket);
 		iput(SOCK_INODE(sf_sock));
+	} else if (ssk->sk_family != family) {
+		err = -EINVAL;
+		goto out_unlock;
 	}
 
 	tp = tcp_sk(ssk);
@@ -1281,20 +1337,11 @@ static int mptcp_setsockopt_repair_subflow(struct mptcp_sock *msk, sockptr_t opt
 	lock_sock_nested(ssk, SINGLE_DEPTH_NESTING);
 	tp->repair = 1;
 	ssk->sk_reuse = SK_FORCE_REUSE;
-
-	/* Configure TCP options */
-	tp->rx_opt.tstamp_ok = !!(sf.flags & MPTCP_SUBFLOW_REPAIR_FLAG_TIMESTAMPS);
-	tp->rx_opt.sack_ok = !!(sf.flags & MPTCP_SUBFLOW_REPAIR_FLAG_SACK_OK);
-	tp->rx_opt.snd_wscale = sf.snd_wscale;
-	tp->rx_opt.rcv_wscale = sf.rcv_wscale;
-	tp->rx_opt.wscale_ok = (sf.snd_wscale || sf.rcv_wscale);
-	tp->rx_opt.mss_clamp = sf.mss_clamp ? sf.mss_clamp : TCP_MSS_DEFAULT;
-	tp->rx_opt.ts_recent = sf.ts_recent;
-	tp->rx_opt.ts_recent_stamp = sf.ts_recent_stamp;
-	WRITE_ONCE(tp->tsoffset, sf.tsoffset);
+	WRITE_ONCE(tp->write_seq, sf.snd_nxt);
+	WRITE_ONCE(tp->rcv_nxt, sf.rcv_nxt);
 
 	/* Bind local address if specified */
-	if (sf.addrs.sa_family != AF_UNSPEC) {
+	if (sf.addrs.sa_family != AF_UNSPEC && !inet_sk(ssk)->inet_num) {
 		if (sf.addrs.sa_family == AF_INET) {
 			addrlen = sizeof(struct sockaddr_in);
 			err = __inet_bind(ssk,
@@ -1310,7 +1357,7 @@ static int mptcp_setsockopt_repair_subflow(struct mptcp_sock *msk, sockptr_t opt
 		} else {
 			err = -EAFNOSUPPORT;
 		}
-		if (err && err != -EINVAL) {
+		if (err) {
 			release_sock(ssk);
 			goto out_unlock;
 		}
@@ -1329,15 +1376,34 @@ static int mptcp_setsockopt_repair_subflow(struct mptcp_sock *msk, sockptr_t opt
 		}
 	}
 
+	/* Configure TCP options */
+	tp->rx_opt.tstamp_ok = !!(sf.flags & MPTCP_SUBFLOW_REPAIR_FLAG_TIMESTAMPS);
+	tp->rx_opt.sack_ok = (sf.flags & MPTCP_SUBFLOW_REPAIR_FLAG_SACK_OK) ?
+			     TCP_SACK_SEEN : 0;
+	tp->rx_opt.snd_wscale = sf.snd_wscale;
+	tp->rx_opt.rcv_wscale = sf.rcv_wscale;
+	tp->rx_opt.wscale_ok = !!(sf.snd_wscale || sf.rcv_wscale);
+	tp->rx_opt.mss_clamp = sf.mss_clamp ? sf.mss_clamp : TCP_MSS_DEFAULT;
+	tp->rx_opt.ts_recent = sf.ts_recent;
+	tp->rx_opt.ts_recent_stamp = sf.ts_recent_stamp;
+	WRITE_ONCE(tp->tsoffset, sf.tsoffset);
+	tcp_mtup_init(ssk);
+	tcp_sync_mss(ssk, inet_csk(ssk)->icsk_pmtu_cookie);
+
 	/* Set sequence numbers and window */
 	WRITE_ONCE(tp->write_seq, sf.snd_nxt);
 	WRITE_ONCE(tp->snd_nxt, sf.snd_nxt);
 	WRITE_ONCE(tp->snd_una, sf.snd_una);
+	tp->snd_up = sf.snd_una;
+	tp->snd_sml = sf.snd_una;
 	WRITE_ONCE(tp->rcv_nxt, sf.rcv_nxt);
-	tp->copied_seq = sf.rcv_nxt;
+	WRITE_ONCE(tp->copied_seq, sf.rcv_nxt);
 	tp->snd_wnd = sf.snd_wnd;
+	tp->max_window = sf.snd_wnd;
+	tcp_init_wl(tp, sf.rcv_nxt);
 	tp->rcv_wnd = sf.rcv_wnd;
 	tp->rcv_wup = sf.rcv_nxt;
+	tp->rcv_mwnd_seq = sf.rcv_nxt + sf.rcv_wnd;
 
 	/* Setup subflow MPTCP mapping */
 	subflow->local_key = msk->local_key;
@@ -1358,7 +1424,12 @@ static int mptcp_setsockopt_repair_subflow(struct mptcp_sock *msk, sockptr_t opt
 	subflow->pm_notified = 1;
 	subflow->conn_finished = 1;
 	subflow->subflow_id = sf.subflow_id ? sf.subflow_id : 1;
+	if (msk->subflow_id <= subflow->subflow_id)
+		msk->subflow_id = subflow->subflow_id + 1;
+	WRITE_ONCE(subflow->local_id, sf.local_id);
+	WRITE_ONCE(subflow->remote_id, sf.remote_id);
 	subflow->backup = !!(sf.flags & MPTCP_SUBFLOW_REPAIR_FLAG_BACKUP);
+	subflow->mp_join = !!(sf.flags & MPTCP_SUBFLOW_REPAIR_FLAG_JOIN);
 	subflow->rcv_wnd_sent = atomic64_read(&msk->rcv_wnd_sent);
 	if (msk->remote_key) {
 		mptcp_crypto_key_sha(msk->remote_key, NULL, &subflow->iasn);
@@ -1368,7 +1439,10 @@ static int mptcp_setsockopt_repair_subflow(struct mptcp_sock *msk, sockptr_t opt
 	release_sock(ssk);
 
 	mptcp_copy_inaddrs(sk, ssk);
-	WRITE_ONCE(msk->wnd_end, msk->snd_nxt + sf.snd_wnd);
+	WRITE_ONCE(msk->wnd_end, msk->snd_una + sf.snd_wnd);
+	WRITE_ONCE(msk->rcvq_space.time, mptcp_stamp());
+	if (sf.addrs.sa_remote.sa_family != AF_UNSPEC && sk->sk_socket)
+		sk->sk_socket->state = SS_CONNECTED;
 	err = 0;
 
 out_unlock:
@@ -2028,12 +2102,27 @@ static int mptcp_getsockopt_repair(struct mptcp_sock *msk, char __user *optval,
 static int mptcp_getsockopt_repair_queue(struct mptcp_sock *msk, char __user *optval,
 					 int __user *optlen)
 {
-	return mptcp_put_int_option(msk, optval, optlen, msk->repair_queue);
+	struct sock *sk = (struct sock *)msk;
+	int val, err;
+
+	lock_sock(sk);
+	if (msk->repair) {
+		val = msk->repair_queue;
+		err = 0;
+	} else {
+		err = -EINVAL;
+	}
+	release_sock(sk);
+	if (err)
+		return err;
+
+	return mptcp_put_int_option(msk, optval, optlen, val);
 }
 
 static int mptcp_getsockopt_repair_keys(struct mptcp_sock *msk, char __user *optval,
 					int __user *optlen)
 {
+	struct sock *sk = (struct sock *)msk;
 	struct mptcp_repair_keys keys = {};
 	int len;
 
@@ -2041,6 +2130,12 @@ static int mptcp_getsockopt_repair_keys(struct mptcp_sock *msk, char __user *opt
 		return -EFAULT;
 	if (len < sizeof(keys))
 		return -EINVAL;
+
+	lock_sock(sk);
+	if (!msk->repair) {
+		release_sock(sk);
+		return -EPERM;
+	}
 
 	keys.local_key = msk->local_key;
 	keys.remote_key = msk->remote_key;
@@ -2051,6 +2146,7 @@ static int mptcp_getsockopt_repair_keys(struct mptcp_sock *msk, char __user *opt
 		keys.flags |= MPTCP_KEY_FLAG_64BIT_ACK;
 	if (__mptcp_check_fallback(msk))
 		keys.flags |= MPTCP_KEY_FLAG_FALLBACK;
+	release_sock(sk);
 
 	if (put_user(sizeof(keys), optlen))
 		return -EFAULT;
@@ -2072,6 +2168,12 @@ static int mptcp_getsockopt_repair_seq(struct mptcp_sock *msk, char __user *optv
 	if (len < sizeof(seq))
 		return -EINVAL;
 
+	lock_sock(sk);
+	if (!msk->repair) {
+		release_sock(sk);
+		return -EPERM;
+	}
+
 	seq.write_seq = msk->write_seq;
 	seq.snd_nxt = msk->snd_nxt;
 	seq.snd_una = msk->snd_una;
@@ -2085,6 +2187,7 @@ static int mptcp_getsockopt_repair_seq(struct mptcp_sock *msk, char __user *optv
 		seq.flags |= MPTCP_SEQ_FLAG_SND_DATA_FIN_ENABLE;
 	if (READ_ONCE(msk->allow_infinite_fallback))
 		seq.flags |= MPTCP_SEQ_FLAG_ALLOW_INFINITE_FALLBACK;
+	release_sock(sk);
 
 	if (put_user(sizeof(seq), optlen))
 		return -EFAULT;
@@ -2097,6 +2200,7 @@ static int mptcp_getsockopt_repair_seq(struct mptcp_sock *msk, char __user *optv
 static int mptcp_getsockopt_repair_subflow(struct mptcp_sock *msk, char __user *optval,
 					   int __user *optlen)
 {
+	struct sock *sk = (struct sock *)msk;
 	struct mptcp_repair_subflow sf = {};
 	struct mptcp_subflow_context *subflow;
 	struct tcp_sock *tp;
@@ -2108,10 +2212,19 @@ static int mptcp_getsockopt_repair_subflow(struct mptcp_sock *msk, char __user *
 	if (len < sizeof(sf))
 		return -EINVAL;
 
-	ssk = msk->first;
-	if (!ssk)
-		return -ENOTCONN;
+	lock_sock(sk);
+	if (!msk->repair) {
+		release_sock(sk);
+		return -EPERM;
+	}
 
+	ssk = msk->first;
+	if (!ssk) {
+		release_sock(sk);
+		return -ENOTCONN;
+	}
+
+	lock_sock_nested(ssk, SINGLE_DEPTH_NESTING);
 	tp = tcp_sk(ssk);
 	subflow = mptcp_subflow_ctx(ssk);
 
@@ -2152,6 +2265,8 @@ static int mptcp_getsockopt_repair_subflow(struct mptcp_sock *msk, char __user *
 	 * the subflow wire progress (tp->snd_nxt).
 	 */
 	sf.rel_write_seq = subflow->rel_write_seq - (tp->write_seq - tp->snd_nxt);
+	release_sock(ssk);
+	release_sock(sk);
 
 	if (put_user(sizeof(sf), optlen))
 		return -EFAULT;

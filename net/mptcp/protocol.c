@@ -1077,12 +1077,7 @@ static void __mptcp_flush_join_list(struct sock *sk, struct list_head *join_list
 	}
 }
 
-static bool mptcp_rtx_timer_pending(struct sock *sk)
-{
-	return timer_pending(&sk->mptcp_retransmit_timer);
-}
-
-static void mptcp_reset_rtx_timer(struct sock *sk)
+void mptcp_reset_rtx_timer(struct sock *sk)
 {
 	struct mptcp_sock *msk = mptcp_sk(sk);
 	unsigned long tout;
@@ -2063,7 +2058,10 @@ static int mptcp_sendmsg(struct sock *sk, struct msghdr *msg, size_t len)
 
 	if (unlikely(msk->repair)) {
 		if (msk->repair_queue == MPTCP_RECV_QUEUE) {
-			copied = mptcp_send_rcvq(sk, msg, len);
+			ret = mptcp_send_rcvq(sk, msg, len);
+			if (ret < 0)
+				goto do_error;
+			copied = ret;
 			goto out;
 		}
 		if (msk->repair_queue == MPTCP_NO_QUEUE) {
@@ -2293,7 +2291,8 @@ static int __mptcp_recvmsg_mskq(struct sock *sk, struct msghdr *msg,
 			break;
 	}
 
-	mptcp_rcv_space_adjust(msk, copied);
+	if (likely(!msk->repair))
+		mptcp_rcv_space_adjust(msk, copied);
 	return copied;
 }
 
@@ -2462,6 +2461,10 @@ static int mptcp_peek_sndq(struct sock *sk, struct msghdr *msg, int len)
 	struct mptcp_data_frag *dfrag;
 	int copied = 0;
 
+	mptcp_data_lock(sk);
+	__mptcp_clean_una(sk);
+	mptcp_data_unlock(sk);
+
 	list_for_each_entry(dfrag, &msk->rtx_queue, list) {
 		int copy = min_t(int, len - copied, dfrag->data_len);
 
@@ -2497,16 +2500,28 @@ static int mptcp_recvmsg(struct sock *sk, struct msghdr *msg, size_t len,
 		goto out_err;
 	}
 
-	if (unlikely(msk->repair && msk->repair_queue == MPTCP_SEND_QUEUE)) {
-		copied = mptcp_peek_sndq(sk, msg, len);
-		goto out_err;
+	len = min_t(size_t, len, INT_MAX);
+
+	if (unlikely(msk->repair)) {
+		if (!(flags & MSG_PEEK)) {
+			copied = -EINVAL;
+			goto out_err;
+		}
+		if (msk->repair_queue == MPTCP_SEND_QUEUE) {
+			copied = mptcp_peek_sndq(sk, msg, len);
+			goto out_err;
+		}
+		if (msk->repair_queue == MPTCP_NO_QUEUE) {
+			copied = -EINVAL;
+			goto out_err;
+		}
+		flags |= MSG_DONTWAIT;
 	}
 
 	mptcp_rps_record_subflows(msk);
 
 	timeo = sock_rcvtimeo(sk, flags & MSG_DONTWAIT);
 
-	len = min_t(size_t, len, INT_MAX);
 	target = sock_rcvlowat(sk, flags & MSG_WAITALL, len);
 
 	if (unlikely(msk->recvmsg_inq))
@@ -4264,6 +4279,9 @@ static int mptcp_connect(struct sock *sk, struct sockaddr_unsized *uaddr,
 	int err = -EINVAL;
 	struct sock *ssk;
 
+	if (unlikely(msk->repair))
+		return -EPERM;
+
 	ssk = __mptcp_nmpc_sk(msk);
 	if (IS_ERR(ssk))
 		return PTR_ERR(ssk);
@@ -4279,10 +4297,7 @@ static int mptcp_connect(struct sock *sk, struct sockaddr_unsized *uaddr,
 		mptcp_early_fallback(msk, subflow, MPTCP_MIB_MD5SIGFALLBACK);
 #endif
 	if (subflow->request_mptcp) {
-		if (unlikely(msk->repair)) {
-			tcp_sk(ssk)->repair = 1;
-			ssk->sk_reuse = SK_FORCE_REUSE;
-		} else if (mptcp_active_should_disable(sk)) {
+		if (mptcp_active_should_disable(sk)) {
 			mptcp_early_fallback(msk, subflow,
 					     MPTCP_MIB_MPCAPABLEACTIVEDISABLED);
 		} else if (mptcp_token_new_connect(ssk) < 0) {
@@ -4291,11 +4306,9 @@ static int mptcp_connect(struct sock *sk, struct sockaddr_unsized *uaddr,
 		}
 	}
 
-	if (likely(!msk->repair)) {
-		WRITE_ONCE(msk->write_seq, subflow->idsn);
-		WRITE_ONCE(msk->snd_nxt, subflow->idsn);
-		WRITE_ONCE(msk->snd_una, subflow->idsn);
-	}
+	WRITE_ONCE(msk->write_seq, subflow->idsn);
+	WRITE_ONCE(msk->snd_nxt, subflow->idsn);
+	WRITE_ONCE(msk->snd_una, subflow->idsn);
 	if (likely(!__mptcp_check_fallback(msk)))
 		MPTCP_INC_STATS(sock_net(sk), MPTCP_MIB_MPCAPABLEACTIVE);
 
@@ -4331,11 +4344,9 @@ out:
 	 * subflow_finish_connect()
 	 */
 	if (unlikely(err)) {
-		if (likely(!msk->repair)) {
-			/* avoid leaving a dangling token in an unconnected socket */
-			mptcp_token_destroy(msk);
-			mptcp_set_state(sk, TCP_CLOSE);
-		}
+		/* avoid leaving a dangling token in an unconnected socket */
+		mptcp_token_destroy(msk);
+		mptcp_set_state(sk, TCP_CLOSE);
 		return err;
 	}
 
