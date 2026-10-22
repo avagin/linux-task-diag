@@ -375,6 +375,7 @@ static int mptcp_setsockopt_sol_socket(struct mptcp_sock *msk, int optname,
 	case SO_BUF_LOCK:
 		ret = sock_setsockopt(sk->sk_socket, SOL_SOCKET, optname, optval, optlen);
 		if (ret == 0) {
+			static const unsigned int tx_rx_locks = SOCK_RCVBUF_LOCK | SOCK_SNDBUF_LOCK;
 			struct mptcp_subflow_context *subflow;
 
 			lock_sock(sk);
@@ -383,8 +384,8 @@ static int mptcp_setsockopt_sol_socket(struct mptcp_sock *msk, int optname,
 				ssk = mptcp_subflow_tcp_sock(subflow);
 				bool slow = lock_sock_fast(ssk);
 
-				ssk->sk_userlocks |= sk->sk_userlocks &
-						     (SOCK_RCVBUF_LOCK | SOCK_SNDBUF_LOCK);
+				ssk->sk_userlocks = (ssk->sk_userlocks & ~tx_rx_locks) |
+						    (sk->sk_userlocks & tx_rx_locks);
 				if (sk->sk_userlocks & SOCK_SNDBUF_LOCK) {
 					WRITE_ONCE(ssk->sk_sndbuf, sk->sk_sndbuf);
 					mptcp_subflow_ctx(ssk)->cached_sndbuf = sk->sk_sndbuf;
