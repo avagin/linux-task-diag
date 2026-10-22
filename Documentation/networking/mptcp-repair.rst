@@ -510,6 +510,11 @@ Restore Procedure
        val = MPTCP_REPAIR_OFF;
        setsockopt(fd, SOL_MPTCP, MPTCP_REPAIR, &val, sizeof(val));
 
+   Because ``MPTCP_REPAIR_ON`` forces ``SK_FORCE_REUSE`` and exiting repair
+   mode resets ``sk_reuse`` to ``SK_NO_REUSE`` (matching ``TCP_REPAIR``),
+   ``SO_REUSEADDR`` should be restored after exiting repair mode if it was set
+   on the original socket.
+
    The connection resumes data transfer seamlessly.
 
 References
