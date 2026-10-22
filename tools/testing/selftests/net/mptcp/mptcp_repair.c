@@ -14,11 +14,13 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
+#include <sys/ioctl.h>
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
+#include <linux/sockios.h>
 #include <linux/tcp.h>
 #include <linux/mptcp.h>
 
@@ -31,11 +33,10 @@
 
 #ifndef MPTCP_REPAIR
 #define MPTCP_REPAIR		10
-#define MPTCP_REPAIR_FLAGS	11
-#define MPTCP_REPAIR_KEYS	12
-#define MPTCP_REPAIR_SEQ	13
-#define MPTCP_REPAIR_SUBFLOW	14
-#define MPTCP_REPAIR_QUEUE	15
+#define MPTCP_REPAIR_KEYS	11
+#define MPTCP_REPAIR_SEQ	12
+#define MPTCP_REPAIR_SUBFLOW	13
+#define MPTCP_REPAIR_QUEUE	14
 
 #define MPTCP_REPAIR_OFF	0
 #define MPTCP_REPAIR_ON		1
@@ -276,9 +277,159 @@ static void test_mptcp_repair_basic(void)
 	close(srv_fd);
 }
 
+static void test_mptcp_repair_queues(void)
+{
+	int srv_fd = -1, cli_fd = -1, ret, val, q;
+	int inq_len = 0, outq_len = 0;
+	socklen_t optlen;
+	struct mptcp_repair_keys keys;
+	struct mptcp_repair_seq seq, rseq;
+	struct mptcp_repair_subflow sf;
+	char msg_in[] = "Unread data in client receive queue!";
+	char msg_post[] = "Post-queue-restore message!";
+	char rcvq_buf[256] = {};
+	char sndq_buf[256] = {};
+	char buf[256] = {};
+	__u64 target_snd_nxt;
+
+	printf("Testing MPTCP repair mode queue dump & restore...\n");
+
+	ret = create_mptcp_pair(&srv_fd, &cli_fd);
+	if (ret < 0)
+		die("Failed to create MPTCP socket pair: %s", strerror(-ret));
+
+	/* Server sends data to client so client has unread data in recv queue */
+	if (write(srv_fd, msg_in, sizeof(msg_in)) != sizeof(msg_in))
+		die("write msg_in failed: %s", strerror(errno));
+
+	/* Wait until data arrives in client receive queue */
+	for (int i = 0; i < 100; i++) {
+		if (ioctl(cli_fd, SIOCINQ, &inq_len) < 0)
+			die("ioctl SIOCINQ failed: %s", strerror(errno));
+		if (inq_len == (int)sizeof(msg_in))
+			break;
+		usleep(10000);
+	}
+	if (inq_len != (int)sizeof(msg_in))
+		die("Expected SIOCINQ %zu, got %d", sizeof(msg_in), inq_len);
+
+	/* Enter repair mode on client */
+	val = MPTCP_REPAIR_ON;
+	if (setsockopt(cli_fd, SOL_MPTCP, MPTCP_REPAIR, &val, sizeof(val)) < 0)
+		die("setsockopt MPTCP_REPAIR ON failed: %s", strerror(errno));
+
+	optlen = sizeof(keys);
+	if (getsockopt(cli_fd, SOL_MPTCP, MPTCP_REPAIR_KEYS, &keys, &optlen) < 0)
+		die("getsockopt MPTCP_REPAIR_KEYS failed: %s", strerror(errno));
+
+	optlen = sizeof(seq);
+	if (getsockopt(cli_fd, SOL_MPTCP, MPTCP_REPAIR_SEQ, &seq, &optlen) < 0)
+		die("getsockopt MPTCP_REPAIR_SEQ failed: %s", strerror(errno));
+
+	optlen = sizeof(sf);
+	if (getsockopt(cli_fd, SOL_MPTCP, MPTCP_REPAIR_SUBFLOW, &sf, &optlen) < 0)
+		die("getsockopt MPTCP_REPAIR_SUBFLOW failed: %s", strerror(errno));
+
+	/* Peek receive queue */
+	q = MPTCP_RECV_QUEUE;
+	if (setsockopt(cli_fd, SOL_MPTCP, MPTCP_REPAIR_QUEUE, &q, sizeof(q)) < 0)
+		die("setsockopt MPTCP_RECV_QUEUE failed: %s", strerror(errno));
+
+	ret = recv(cli_fd, rcvq_buf, inq_len, MSG_PEEK);
+	if (ret != inq_len)
+		die("recv MSG_PEEK MPTCP_RECV_QUEUE returned %d, expected %d", ret, inq_len);
+
+	if (ioctl(cli_fd, SIOCOUTQ, &outq_len) < 0)
+		die("ioctl SIOCOUTQ failed: %s", strerror(errno));
+	if (outq_len > 0) {
+		q = MPTCP_SEND_QUEUE;
+		if (setsockopt(cli_fd, SOL_MPTCP, MPTCP_REPAIR_QUEUE, &q, sizeof(q)) < 0)
+			die("setsockopt MPTCP_SEND_QUEUE failed: %s", strerror(errno));
+		ret = recv(cli_fd, sndq_buf, outq_len, MSG_PEEK);
+		if (ret != outq_len)
+			die("recv MSG_PEEK MPTCP_SEND_QUEUE returned %d, expected %d", ret, outq_len);
+	}
+
+	close(cli_fd);
+
+	/* Recreate and restore client socket with queued data */
+	cli_fd = socket(AF_INET, SOCK_STREAM, IPPROTO_MPTCP);
+	if (cli_fd < 0)
+		die("socket new client failed: %s", strerror(errno));
+
+	val = MPTCP_REPAIR_ON;
+	if (setsockopt(cli_fd, SOL_MPTCP, MPTCP_REPAIR, &val, sizeof(val)) < 0)
+		die("setsockopt restore MPTCP_REPAIR ON failed: %s", strerror(errno));
+
+	if (setsockopt(cli_fd, SOL_MPTCP, MPTCP_REPAIR_KEYS, &keys, sizeof(keys)) < 0)
+		die("setsockopt restore MPTCP_REPAIR_KEYS failed: %s", strerror(errno));
+
+	target_snd_nxt = seq.snd_nxt;
+	if (outq_len && sf.idsn) {
+		__u64 sf_snd_nxt = sf.idsn + sf.rel_write_seq;
+
+		if (sf_snd_nxt >= seq.snd_una && sf_snd_nxt < seq.snd_nxt)
+			target_snd_nxt = sf_snd_nxt;
+	}
+	rseq = seq;
+	rseq.write_seq = outq_len ? seq.snd_una : seq.write_seq;
+	rseq.snd_nxt = target_snd_nxt;
+	rseq.rcv_nxt = inq_len ? (seq.rcv_nxt - inq_len) : seq.rcv_nxt;
+	if (setsockopt(cli_fd, SOL_MPTCP, MPTCP_REPAIR_SEQ, &rseq, sizeof(rseq)) < 0)
+		die("setsockopt restore MPTCP_REPAIR_SEQ failed: %s", strerror(errno));
+
+	if (setsockopt(cli_fd, SOL_MPTCP, MPTCP_REPAIR_SUBFLOW, &sf, sizeof(sf)) < 0)
+		die("setsockopt restore MPTCP_REPAIR_SUBFLOW failed: %s", strerror(errno));
+
+	q = MPTCP_RECV_QUEUE;
+	if (setsockopt(cli_fd, SOL_MPTCP, MPTCP_REPAIR_QUEUE, &q, sizeof(q)) < 0)
+		die("setsockopt restore MPTCP_RECV_QUEUE failed: %s", strerror(errno));
+	if (send(cli_fd, rcvq_buf, inq_len, 0) != inq_len)
+		die("send restore MPTCP_RECV_QUEUE failed: %s", strerror(errno));
+
+	if (outq_len > 0) {
+		q = MPTCP_SEND_QUEUE;
+		if (setsockopt(cli_fd, SOL_MPTCP, MPTCP_REPAIR_QUEUE, &q, sizeof(q)) < 0)
+			die("setsockopt restore MPTCP_SEND_QUEUE failed: %s", strerror(errno));
+		if (send(cli_fd, sndq_buf, outq_len, 0) != outq_len)
+			die("send restore MPTCP_SEND_QUEUE failed: %s", strerror(errno));
+	}
+
+	rseq.write_seq = seq.write_seq;
+	rseq.snd_nxt = target_snd_nxt;
+	rseq.rcv_nxt = seq.rcv_nxt;
+	if (setsockopt(cli_fd, SOL_MPTCP, MPTCP_REPAIR_SEQ, &rseq, sizeof(rseq)) < 0)
+		die("setsockopt re-sync MPTCP_REPAIR_SEQ failed: %s", strerror(errno));
+
+	val = MPTCP_REPAIR_OFF;
+	if (setsockopt(cli_fd, SOL_MPTCP, MPTCP_REPAIR, &val, sizeof(val)) < 0)
+		die("setsockopt restore MPTCP_REPAIR OFF failed: %s", strerror(errno));
+
+	/* Read restored receive queue data */
+	if (read(cli_fd, buf, sizeof(buf)) != (ssize_t)sizeof(msg_in))
+		die("read restored msg_in failed: %s", strerror(errno));
+	if (memcmp(buf, msg_in, sizeof(msg_in)) != 0)
+		die("restored msg_in payload mismatch");
+
+	/* Exchange post-restore data */
+	if (write(cli_fd, msg_post, sizeof(msg_post)) != sizeof(msg_post))
+		die("write msg_post failed: %s", strerror(errno));
+	memset(buf, 0, sizeof(buf));
+	if (read(srv_fd, buf, sizeof(buf)) != sizeof(msg_post))
+		die("read msg_post failed: %s", strerror(errno));
+	if (memcmp(buf, msg_post, sizeof(msg_post)) != 0)
+		die("msg_post payload mismatch");
+
+	printf("  Queue dump & restore verification passed!\n");
+
+	close(cli_fd);
+	close(srv_fd);
+}
+
 int main(int argc, char *argv[])
 {
 	test_mptcp_repair_basic();
+	test_mptcp_repair_queues();
 	printf("All MPTCP repair mode tests passed successfully!\n");
 	return 0;
 }
