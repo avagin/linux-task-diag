@@ -453,8 +453,6 @@ static int mptcp_setsockopt_v6(struct mptcp_sock *msk, int optname,
 	case IPV6_V6ONLY:
 	case IPV6_TRANSPARENT:
 	case IPV6_FREEBIND:
-	case IPV6_RECVPKTINFO:
-	case IPV6_2292PKTINFO:
 		lock_sock(sk);
 		ssk = __mptcp_nmpc_sk(msk);
 		if (IS_ERR(ssk)) {
@@ -482,18 +480,66 @@ static int mptcp_setsockopt_v6(struct mptcp_sock *msk, int optname,
 			inet_assign_bit(FREEBIND, sk,
 					inet_test_bit(FREEBIND, ssk));
 			break;
-#if IS_ENABLED(CONFIG_MPTCP_IPV6)
-		case IPV6_RECVPKTINFO:
-		case IPV6_2292PKTINFO:
-			if (inet6_sk(sk) && inet6_sk(ssk))
-				inet6_sk(sk)->rxopt.bits.rxinfo =
-					inet6_sk(ssk)->rxopt.bits.rxinfo;
-			break;
-#endif
 		}
 
 		release_sock(sk);
 		break;
+#if IS_ENABLED(CONFIG_MPTCP_IPV6)
+	case IPV6_RECVPKTINFO:
+	case IPV6_2292PKTINFO: {
+		struct mptcp_subflow_context *subflow;
+		struct ipv6_pinfo *np = inet6_sk(sk);
+		int val;
+
+		if (sk->sk_family != AF_INET6 || !np)
+			return -ENOPROTOOPT;
+
+		ret = mptcp_get_int_option(msk, optval, optlen, &val);
+		if (ret)
+			return ret;
+
+		lock_sock(sk);
+		if (optname == IPV6_RECVPKTINFO)
+			np->rxopt.bits.rxinfo = !!val;
+		else
+			np->rxopt.bits.rxoinfo = !!val;
+
+		if (msk->first && !__mptcp_has_initial_subflow(msk)) {
+			struct ipv6_pinfo *fnp = inet6_sk(msk->first);
+
+			if (fnp) {
+				bool slow = lock_sock_fast(msk->first);
+
+				if (optname == IPV6_RECVPKTINFO)
+					fnp->rxopt.bits.rxinfo = !!val;
+				else
+					fnp->rxopt.bits.rxoinfo = !!val;
+				unlock_sock_fast(msk->first, slow);
+			}
+		}
+
+		mptcp_for_each_subflow(msk, subflow) {
+			struct ipv6_pinfo *snp;
+			bool slow;
+
+			ssk = mptcp_subflow_tcp_sock(subflow);
+			snp = inet6_sk(ssk);
+			if (!snp)
+				continue;
+
+			slow = lock_sock_fast(ssk);
+			if (optname == IPV6_RECVPKTINFO)
+				snp->rxopt.bits.rxinfo = !!val;
+			else
+				snp->rxopt.bits.rxoinfo = !!val;
+			unlock_sock_fast(ssk, slow);
+		}
+
+		sockopt_seq_inc(msk);
+		release_sock(sk);
+		break;
+	}
+#endif
 	}
 
 	return ret;
@@ -783,7 +829,7 @@ static int mptcp_setsockopt_sol_ip_set(struct mptcp_sock *msk, int optname,
 
 	lock_sock(sk);
 
-	if (msk->first) {
+	if (msk->first && !__mptcp_has_initial_subflow(msk)) {
 		bool slow = lock_sock_fast(msk->first);
 
 		switch (optname) {
@@ -1949,9 +1995,13 @@ static int mptcp_getsockopt_v6(struct mptcp_sock *msk, int optname,
 		return mptcp_put_int_option(msk, optval, optlen,
 					    sk->sk_ipv6only);
 	case IPV6_RECVPKTINFO:
+	case IPV6_2292PKTINFO:
 #if IS_ENABLED(CONFIG_MPTCP_IPV6)
+		if (optname == IPV6_RECVPKTINFO)
+			return mptcp_put_int_option(msk, optval, optlen,
+						    np ? np->rxopt.bits.rxinfo : 0);
 		return mptcp_put_int_option(msk, optval, optlen,
-					    np ? np->rxopt.bits.rxinfo : 0);
+					    np ? np->rxopt.bits.rxoinfo : 0);
 #else
 		return -EOPNOTSUPP;
 #endif
@@ -2226,8 +2276,10 @@ static void sync_socket_options(struct mptcp_sock *msk, struct sock *ssk)
 	inet_assign_bit(PKTINFO, ssk, inet_test_bit(PKTINFO, sk));
 #if IS_ENABLED(CONFIG_MPTCP_IPV6)
 	if (sk->sk_family == AF_INET6 && ssk->sk_family == AF_INET6 &&
-	    inet6_sk(sk) && inet6_sk(ssk))
+	    inet6_sk(sk) && inet6_sk(ssk)) {
 		inet6_sk(ssk)->rxopt.bits.rxinfo = inet6_sk(sk)->rxopt.bits.rxinfo;
+		inet6_sk(ssk)->rxopt.bits.rxoinfo = inet6_sk(sk)->rxopt.bits.rxoinfo;
+	}
 #endif
 	ssk->sk_reuse = sk->sk_reuse;
 	ssk->sk_reuseport = sk->sk_reuseport;
