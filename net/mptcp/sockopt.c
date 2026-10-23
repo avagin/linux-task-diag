@@ -1198,6 +1198,7 @@ static int mptcp_setsockopt_repair_seq(struct mptcp_sock *msk, sockptr_t optval,
 {
 	struct sock *sk = (struct sock *)msk;
 	struct mptcp_repair_seq seq;
+	u64 wnd_end;
 	int ret = 0;
 
 	if (optlen < sizeof(seq))
@@ -1228,8 +1229,12 @@ static int mptcp_setsockopt_repair_seq(struct mptcp_sock *msk, sockptr_t optval,
 	WRITE_ONCE(msk->write_seq, seq.write_seq);
 	WRITE_ONCE(msk->snd_nxt, seq.snd_nxt);
 	WRITE_ONCE(msk->snd_una, seq.snd_una);
+	wnd_end = msk->snd_una;
 	if (msk->first)
-		WRITE_ONCE(msk->wnd_end, msk->snd_una + tcp_sk(msk->first)->snd_wnd);
+		wnd_end += tcp_sk(msk->first)->snd_wnd;
+	if (before64(wnd_end, msk->snd_nxt))
+		wnd_end = msk->snd_nxt;
+	WRITE_ONCE(msk->wnd_end, wnd_end);
 	WRITE_ONCE(msk->ack_seq, seq.rcv_nxt);
 	atomic64_set(&msk->rcv_wnd_sent, seq.rcv_wnd_sent);
 	WRITE_ONCE(msk->rcv_data_fin_seq, seq.rcv_data_fin_seq);
@@ -1266,6 +1271,7 @@ static int mptcp_setsockopt_repair_subflow(struct mptcp_sock *msk, sockptr_t opt
 	struct tcp_sock *tp;
 	struct socket *sf_sock;
 	struct sock *ssk;
+	u64 wnd_end;
 	int addrlen, err = 0;
 
 	if (optlen < sizeof(sf))
@@ -1439,7 +1445,10 @@ static int mptcp_setsockopt_repair_subflow(struct mptcp_sock *msk, sockptr_t opt
 	release_sock(ssk);
 
 	mptcp_copy_inaddrs(sk, ssk);
-	WRITE_ONCE(msk->wnd_end, msk->snd_una + sf.snd_wnd);
+	wnd_end = msk->snd_una + sf.snd_wnd;
+	if (before64(wnd_end, msk->snd_nxt))
+		wnd_end = msk->snd_nxt;
+	WRITE_ONCE(msk->wnd_end, wnd_end);
 	WRITE_ONCE(msk->rcvq_space.time, mptcp_stamp());
 	if (sf.addrs.sa_remote.sa_family != AF_UNSPEC && sk->sk_socket)
 		sk->sk_socket->state = SS_CONNECTED;
@@ -2176,6 +2185,23 @@ static int mptcp_getsockopt_repair_seq(struct mptcp_sock *msk, char __user *optv
 
 	seq.write_seq = msk->write_seq;
 	seq.snd_nxt = msk->snd_nxt;
+	if (msk->first) {
+		struct sock *ssk = msk->first;
+		struct tcp_sock *tp = tcp_sk(ssk);
+		u32 unsent;
+
+		lock_sock_nested(ssk, SINGLE_DEPTH_NESTING);
+		unsent = tp->write_seq - tp->snd_nxt;
+		release_sock(ssk);
+		if (unsent) {
+			if (mptcp_data_fin_enabled(msk))
+				unsent++;
+			if (after64(seq.snd_nxt, msk->snd_una + unsent))
+				seq.snd_nxt -= unsent;
+			else
+				seq.snd_nxt = msk->snd_una;
+		}
+	}
 	seq.snd_una = msk->snd_una;
 	seq.rcv_nxt = msk->ack_seq;
 	seq.rcv_wnd_sent = atomic64_read(&msk->rcv_wnd_sent);
