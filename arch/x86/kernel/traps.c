@@ -44,6 +44,8 @@
 #include <linux/atomic.h>
 #include <linux/iommu.h>
 #include <linux/ubsan.h>
+#include <linux/seccomp.h>
+#include <uapi/linux/audit.h>
 
 #include <asm/stacktrace.h>
 #include <asm/processor.h>
@@ -56,6 +58,7 @@
 #include <asm/fred.h>
 #include <asm/fpu/api.h>
 #include <asm/cpu.h>
+#include <asm/cpuid/api.h>
 #include <asm/cpu_entry_area.h>
 #include <asm/mce.h>
 #include <asm/fixmap.h>
@@ -911,6 +914,62 @@ static void gp_user_force_sig_segv(struct pt_regs *regs, int trapnr,
 	force_sig(SIGSEGV);
 }
 
+/*
+ * Pass a CPUID instruction that faulted because of seccomp CPUID filtering
+ * (TIF_SECCOMP_CPUID) to the seccomp filters. Returns false if the #GP must
+ * be handled as usual, which delivers SIGSEGV.
+ */
+static bool fixup_seccomp_cpuid(struct pt_regs *regs)
+{
+	unsigned char buf[MAX_INSN_SIZE];
+	u32 eax, ecx, out[4];
+	struct insn insn;
+	int nr_copied;
+	u32 arch;
+
+	if (!IS_ENABLED(CONFIG_SECCOMP_FILTER) ||
+	    !test_thread_flag(TIF_SECCOMP_CPUID))
+		return false;
+
+	/* ARCH_SET_CPUID takes precedence: it asks for SIGSEGV. */
+	if (test_thread_flag(TIF_NOCPUID))
+		return false;
+
+	nr_copied = insn_fetch_from_user(regs, buf);
+	if (nr_copied <= 0)
+		return false;
+
+	if (!insn_decode_from_regs(&insn, regs, buf, nr_copied))
+		return false;
+
+	/* CPUID is 0f a2 */
+	if (insn.opcode.nbytes != 2 ||
+	    insn.opcode.bytes[0] != 0x0f || insn.opcode.bytes[1] != 0xa2)
+		return false;
+
+	eax = regs->ax;
+	ecx = regs->cx;
+	arch = user_64bit_mode(regs) ? AUDIT_ARCH_X86_64 : AUDIT_ARCH_I386;
+
+	switch (seccomp_filter_cpuid(arch, regs->ip, eax, ecx, out)) {
+	case SECCOMP_CPUID_ALLOW:
+		cpuid_count(eax, ecx, &out[0], &out[1], &out[2], &out[3]);
+		fallthrough;
+	case SECCOMP_CPUID_EMULATE:
+		regs->ax = out[0];
+		regs->bx = out[1];
+		regs->cx = out[2];
+		regs->dx = out[3];
+		regs->ip += insn.length;
+		return true;
+	case SECCOMP_CPUID_RETRY:
+		return true;
+	case SECCOMP_CPUID_DENY:
+	default:
+		return false;
+	}
+}
+
 DEFINE_IDTENTRY_ERRORCODE(exc_general_protection)
 {
 	char desc[sizeof(GPFSTR) + 50 + 2*sizeof(unsigned long) + 1] = GPFSTR;
@@ -930,6 +989,9 @@ DEFINE_IDTENTRY_ERRORCODE(exc_general_protection)
 	}
 
 	if (user_mode(regs)) {
+		if (!error_code && fixup_seccomp_cpuid(regs))
+			goto exit;
+
 		if (fixup_iopl_exception(regs))
 			goto exit;
 

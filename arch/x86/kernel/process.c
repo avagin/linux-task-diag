@@ -29,6 +29,7 @@
 #include <trace/events/power.h>
 #include <linux/hw_breakpoint.h>
 #include <linux/entry-common.h>
+#include <linux/seccomp.h>
 #include <asm/cpu.h>
 #include <asm/cpuid/api.h>
 #include <asm/apic.h>
@@ -384,11 +385,49 @@ static void enable_cpuid(void)
 		/*
 		 * Must flip the CPU state synchronously with
 		 * TIF_NOCPUID in the current running context.
+		 * Seccomp may still need CPUID to fault.
 		 */
-		set_cpuid_faulting(false);
+		set_cpuid_faulting(test_thread_flag(TIF_SECCOMP_CPUID));
 	}
 	preempt_enable();
 }
+
+#ifdef CONFIG_SECCOMP_FILTER
+bool arch_seccomp_cpuid_supported(void)
+{
+	return boot_cpu_has(X86_FEATURE_CPUID_FAULT);
+}
+
+/*
+ * Make @task trap CPUID instructions so they can be passed to seccomp.
+ * Called with siglock held. If @task is running on another CPU, it only
+ * starts trapping after its next context switch, unless it is kicked
+ * with arch_seccomp_cpuid_sync().
+ */
+void arch_seccomp_cpuid_enable(struct task_struct *task)
+{
+	set_tsk_thread_flag(task, TIF_SECCOMP_CPUID);
+
+	if (task == current) {
+		preempt_disable();
+		set_cpuid_faulting(true);
+		preempt_enable();
+	}
+}
+
+static void seccomp_cpuid_sync_ipi(void *info)
+{
+	if (current == info && test_thread_flag(TIF_SECCOMP_CPUID))
+		set_cpuid_faulting(true);
+}
+
+void arch_seccomp_cpuid_sync(struct task_struct *task)
+{
+	if (task != current && task_curr(task))
+		smp_call_function_single(task_cpu(task),
+					 seccomp_cpuid_sync_ipi, task, 1);
+}
+#endif
 
 static int get_cpuid_mode(void)
 {
@@ -743,8 +782,13 @@ void __switch_to_xtra(struct task_struct *prev_p, struct task_struct *next_p)
 	if ((tifp ^ tifn) & _TIF_NOTSC)
 		cr4_toggle_bits_irqsoff(X86_CR4_TSD);
 
-	if ((tifp ^ tifn) & _TIF_NOCPUID)
-		set_cpuid_faulting(!!(tifn & _TIF_NOCPUID));
+	/*
+	 * Don't rely on the CPU state matching @prev_p here: TIF_SECCOMP_CPUID
+	 * can be set on a task while it runs on another CPU (seccomp TSYNC).
+	 * set_cpuid_faulting() skips the MSR write if nothing changes.
+	 */
+	if ((tifp | tifn) & (_TIF_NOCPUID | _TIF_SECCOMP_CPUID))
+		set_cpuid_faulting(!!(tifn & (_TIF_NOCPUID | _TIF_SECCOMP_CPUID)));
 
 	if (likely(!((tifp | tifn) & _TIF_SPEC_FORCE_UPDATE))) {
 		__speculation_ctrl_update(tifp, tifn);
