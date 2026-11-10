@@ -87,6 +87,13 @@ struct seccomp_knotif {
 	long val;
 	u32 flags;
 
+	/* The notification was triggered by a CPUID instruction */
+	bool cpuid;
+	/* Set by SECCOMP_IOCTL_NOTIF_SEND_CPUID, with values in @cpuid_regs */
+	bool cpuid_replied;
+	/* EAX, EBX, ECX and EDX values for an emulated CPUID instruction */
+	u32 cpuid_regs[4];
+
 	/*
 	 * Signals when this has changed states, such as the listener
 	 * dying, a new seccomp addfd message, or changing to REPLIED
@@ -205,6 +212,8 @@ static inline void seccomp_cache_prepare(struct seccomp_filter *sfilter)
  * @log: true if all actions except for SECCOMP_RET_ALLOW should be logged
  * @wait_killable_recv: Put notifying process in killable state once the
  *			notification is received by the userspace listener.
+ * @cpuid: true if this filter is also run for CPUID instructions
+ *	   (SECCOMP_FILTER_FLAG_CPUID)
  * @prev: points to a previously installed, or inherited, filter
  * @prog: the BPF program to evaluate
  * @notif: the struct that holds all notification related information
@@ -226,6 +235,7 @@ struct seccomp_filter {
 	refcount_t users;
 	bool log;
 	bool wait_killable_recv;
+	bool cpuid;
 	struct action_cache cache;
 	struct seccomp_filter *prev;
 	struct bpf_prog *prog;
@@ -476,6 +486,15 @@ static int is_ancestor(struct seccomp_filter *parent,
 	return 0;
 }
 
+/* Returns true if any filter in the chain handles CPUID instructions. */
+static bool seccomp_chain_has_cpuid(const struct seccomp_filter *filter)
+{
+	for (; filter; filter = filter->prev)
+		if (filter->cpuid)
+			return true;
+	return false;
+}
+
 /**
  * seccomp_can_sync_threads: checks if all threads can be synchronized
  *
@@ -657,6 +676,14 @@ static inline void seccomp_sync_threads(unsigned long flags)
 		if (thread->seccomp.mode == SECCOMP_MODE_DISABLED)
 			seccomp_assign_mode(thread, SECCOMP_MODE_FILTER,
 					    flags);
+
+		/*
+		 * Enable CPUID trapping for the thread. If it is currently
+		 * running on another CPU, seccomp_set_mode_filter() kicks it
+		 * via arch_seccomp_cpuid_sync() once the locks are dropped.
+		 */
+		if (seccomp_chain_has_cpuid(caller->seccomp.filter))
+			arch_seccomp_cpuid_enable(thread);
 	}
 }
 
@@ -954,6 +981,10 @@ static long seccomp_attach_filter(unsigned int flags,
 	if (flags & SECCOMP_FILTER_FLAG_WAIT_KILLABLE_RECV)
 		filter->wait_killable_recv = true;
 
+	/* Run this filter for CPUID instructions too, if requested. */
+	if (flags & SECCOMP_FILTER_FLAG_CPUID)
+		filter->cpuid = true;
+
 	/*
 	 * If there is an existing filter, make it the prev and don't drop its
 	 * task reference.
@@ -962,6 +993,10 @@ static long seccomp_attach_filter(unsigned int flags,
 	seccomp_cache_prepare(filter);
 	current->seccomp.filter = filter;
 	atomic_inc(&current->seccomp.filter_count);
+
+	/* Start trapping CPUID instructions in the current task. */
+	if (filter->cpuid)
+		arch_seccomp_cpuid_enable(current);
 
 	/* Now that the new filter is in place, synchronize to all threads. */
 	if (flags & SECCOMP_FILTER_FLAG_TSYNC)
@@ -1235,6 +1270,7 @@ interrupted:
 	/* Ignore a reply that raced with the interruption. */
 	n->val = 0;
 	n->flags = 0;
+	n->cpuid_replied = false;
 
 cleanup:
 	/* If there were any pending addfd calls, clear them out */
@@ -1398,6 +1434,150 @@ skip:
 	seccomp_log(this_syscall, 0, action, match ? match->log : false);
 	return false;
 }
+
+#ifdef CONFIG_HAVE_ARCH_SECCOMP_CPUID
+static enum seccomp_cpuid_result
+seccomp_do_cpuid_notification(struct seccomp_filter *match,
+			      const struct seccomp_data *sd, u32 regs[4])
+{
+	struct seccomp_knotif n = { .cpuid = true };
+	bool replied;
+	int err;
+
+	err = __seccomp_user_notify(match, sd, &n, &replied);
+	if (!replied) {
+		/* No listener: deny, as syscalls get -ENOSYS. */
+		if (err == -ENOSYS)
+			return SECCOMP_CPUID_DENY;
+		/* Interrupted: retry after the signal is handled. */
+		return SECCOMP_CPUID_RETRY;
+	}
+
+	if (n.flags & SECCOMP_USER_NOTIF_FLAG_CONTINUE)
+		return SECCOMP_CPUID_ALLOW;
+
+	if (n.cpuid_replied) {
+		memcpy(regs, n.cpuid_regs, sizeof(n.cpuid_regs));
+		return SECCOMP_CPUID_EMULATE;
+	}
+
+	/* SECCOMP_IOCTL_NOTIF_SEND with an error, or the listener died. */
+	return SECCOMP_CPUID_DENY;
+}
+
+static void seccomp_cpuid_force_sigsys(u32 arch, int reason)
+{
+	struct kernel_siginfo info;
+
+	clear_siginfo(&info);
+	info.si_signo = SIGSYS;
+	info.si_code = SYS_SECCOMP;
+	info.si_call_addr = (void __user *)KSTK_EIP(current);
+	info.si_errno = reason;
+	info.si_arch = arch;
+	info.si_syscall = SECCOMP_NR_CPUID;
+	force_sig_info(&info);
+}
+
+/**
+ * seccomp_filter_cpuid - run CPUID-enabled seccomp filters for a CPUID
+ *			  instruction executed by the current task
+ * @arch: AUDIT_ARCH_* value for the mode the instruction was executed in
+ * @ip: address of the CPUID instruction
+ * @eax: input EAX (leaf)
+ * @ecx: input ECX (subleaf)
+ * @regs: output EAX, EBX, ECX and EDX, valid for SECCOMP_CPUID_EMULATE
+ *
+ * Only filters installed with SECCOMP_FILTER_FLAG_CPUID are run. They
+ * see seccomp_data.nr == SECCOMP_NR_CPUID, with args[0] = @eax and
+ * args[1] = @ecx. As for system calls, the action with the lowest value
+ * wins:
+ *
+ * - SECCOMP_RET_ALLOW, SECCOMP_RET_LOG: execute CPUID natively.
+ * - SECCOMP_RET_ERRNO, SECCOMP_RET_TRACE: deny (SIGSEGV).
+ * - SECCOMP_RET_TRAP: deliver SIGSYS with si_syscall == SECCOMP_NR_CPUID.
+ * - SECCOMP_RET_USER_NOTIF: ask the listener, which can emulate CPUID
+ *   with SECCOMP_IOCTL_NOTIF_SEND_CPUID.
+ * - SECCOMP_RET_KILL_*: kill the thread or process.
+ *
+ * Return: how the caller must complete the instruction.
+ */
+enum seccomp_cpuid_result seccomp_filter_cpuid(u32 arch, unsigned long ip,
+					       u32 eax, u32 ecx, u32 regs[4])
+{
+	struct seccomp_filter *f, *match = NULL;
+	struct seccomp_data sd = {};
+	u32 ret = SECCOMP_RET_ALLOW;
+	u32 action;
+	int data;
+
+	if (current->seccomp.mode != SECCOMP_MODE_FILTER)
+		return SECCOMP_CPUID_ALLOW;
+
+	/*
+	 * TIF_SECCOMP_CPUID may have been set by another thread (TSYNC).
+	 * Make sure the mode and filter it set are seen too.
+	 */
+	smp_rmb();
+
+	sd.nr = SECCOMP_NR_CPUID;
+	sd.arch = arch;
+	sd.instruction_pointer = ip;
+	sd.args[0] = eax;
+	sd.args[1] = ecx;
+
+	for (f = READ_ONCE(current->seccomp.filter); f; f = f->prev) {
+		u32 cur_ret;
+
+		if (!f->cpuid)
+			continue;
+
+		cur_ret = bpf_prog_run_pin_on_cpu(f->prog, &sd);
+		if (ACTION_ONLY(cur_ret) < ACTION_ONLY(ret)) {
+			ret = cur_ret;
+			match = f;
+		}
+	}
+
+	data = ret & SECCOMP_RET_DATA;
+	action = ret & SECCOMP_RET_ACTION_FULL;
+
+	switch (action) {
+	case SECCOMP_RET_ALLOW:
+		return SECCOMP_CPUID_ALLOW;
+
+	case SECCOMP_RET_LOG:
+		seccomp_log(SECCOMP_NR_CPUID, 0, action, true);
+		return SECCOMP_CPUID_ALLOW;
+
+	case SECCOMP_RET_ERRNO:
+	case SECCOMP_RET_TRACE:
+		seccomp_log(SECCOMP_NR_CPUID, 0, action, match->log);
+		return SECCOMP_CPUID_DENY;
+
+	case SECCOMP_RET_TRAP:
+		seccomp_cpuid_force_sigsys(arch, data);
+		seccomp_log(SECCOMP_NR_CPUID, 0, action, match->log);
+		return SECCOMP_CPUID_RETRY;
+
+	case SECCOMP_RET_USER_NOTIF:
+		return seccomp_do_cpuid_notification(match, &sd, regs);
+
+	case SECCOMP_RET_KILL_THREAD:
+	case SECCOMP_RET_KILL_PROCESS:
+	default:
+		current->seccomp.mode = SECCOMP_MODE_DEAD;
+		seccomp_log(SECCOMP_NR_CPUID, SIGSYS, action, true);
+		/* Dump core only if this is the last remaining thread. */
+		if (action != SECCOMP_RET_KILL_THREAD ||
+		    (atomic_read(&current->signal->live) == 1))
+			force_sig_seccomp(SECCOMP_NR_CPUID, data, true);
+		else
+			do_exit(SIGSYS);
+		return SECCOMP_CPUID_RETRY;
+	}
+}
+#endif /* CONFIG_HAVE_ARCH_SECCOMP_CPUID */
 #else
 static bool __seccomp_filter(int this_syscall, const bool recheck_after_trace)
 {
@@ -1612,6 +1792,8 @@ static long seccomp_notify_recv(struct seccomp_filter *filter,
 	unotif.id = knotif->id;
 	unotif.pid = task_pid_vnr(knotif->task);
 	unotif.data = *(knotif->data);
+	if (knotif->cpuid)
+		unotif.flags |= SECCOMP_NOTIF_FLAG_CPUID;
 
 	knotif->state = SECCOMP_NOTIFY_SENT;
 	wake_up_poll(&filter->wqh, EPOLLOUT | EPOLLWRNORM);
@@ -1677,11 +1859,75 @@ static long seccomp_notify_send(struct seccomp_filter *filter,
 		goto out;
 	}
 
+	/*
+	 * A CPUID instruction has no return value: it can only be continued
+	 * or denied here. Use SECCOMP_IOCTL_NOTIF_SEND_CPUID to emulate it.
+	 */
+	if (knotif->cpuid &&
+	    !(resp.flags & SECCOMP_USER_NOTIF_FLAG_CONTINUE) &&
+	    (!resp.error || resp.val)) {
+		ret = -EINVAL;
+		goto out;
+	}
+
 	ret = 0;
 	knotif->state = SECCOMP_NOTIFY_REPLIED;
 	knotif->error = resp.error;
 	knotif->val = resp.val;
 	knotif->flags = resp.flags;
+	if (filter->notif->flags & SECCOMP_USER_NOTIF_FD_SYNC_WAKE_UP)
+		complete_on_current_cpu(&knotif->ready);
+	else
+		complete(&knotif->ready);
+out:
+	mutex_unlock(&filter->notify_lock);
+	return ret;
+}
+
+static long seccomp_notify_send_cpuid(struct seccomp_filter *filter,
+				      void __user *buf)
+{
+	struct seccomp_notif_resp_cpuid resp = {};
+	struct seccomp_knotif *knotif;
+	long ret;
+
+	if (copy_from_user(&resp, buf, sizeof(resp)))
+		return -EFAULT;
+
+	if (resp.flags || resp.__reserved)
+		return -EINVAL;
+
+	ret = mutex_lock_interruptible(&filter->notify_lock);
+	if (ret < 0)
+		return ret;
+
+	knotif = find_notification(filter, resp.id);
+	if (!knotif) {
+		ret = -ENOENT;
+		goto out;
+	}
+
+	if (!knotif->cpuid) {
+		ret = -EINVAL;
+		goto out;
+	}
+
+	/* Allow exactly one reply. */
+	if (knotif->state != SECCOMP_NOTIFY_SENT) {
+		ret = -EINPROGRESS;
+		goto out;
+	}
+
+	ret = 0;
+	knotif->state = SECCOMP_NOTIFY_REPLIED;
+	knotif->error = 0;
+	knotif->val = 0;
+	knotif->flags = 0;
+	knotif->cpuid_replied = true;
+	knotif->cpuid_regs[0] = resp.eax;
+	knotif->cpuid_regs[1] = resp.ebx;
+	knotif->cpuid_regs[2] = resp.ecx;
+	knotif->cpuid_regs[3] = resp.edx;
 	if (filter->notif->flags & SECCOMP_USER_NOTIF_FD_SYNC_WAKE_UP)
 		complete_on_current_cpu(&knotif->ready);
 	else
@@ -1779,6 +2025,12 @@ static long seccomp_notify_addfd(struct seccomp_filter *filter,
 		goto out_unlock;
 	}
 
+	/* There is no system call to install a file descriptor for. */
+	if (knotif->cpuid) {
+		ret = -EINVAL;
+		goto out_unlock;
+	}
+
 	/*
 	 * We do not want to allow for FD injection to occur before the
 	 * notification has been picked up by a userspace handler, or after
@@ -1862,6 +2114,8 @@ static long seccomp_notify_ioctl(struct file *file, unsigned int cmd,
 		return seccomp_notify_id_valid(filter, buf);
 	case SECCOMP_IOCTL_NOTIF_SET_FLAGS:
 		return seccomp_notify_set_flags(filter, arg);
+	case SECCOMP_IOCTL_NOTIF_SEND_CPUID:
+		return seccomp_notify_send_cpuid(filter, buf);
 	}
 
 	/* Extensible Argument ioctls */
@@ -1983,6 +2237,7 @@ static long seccomp_set_mode_filter(unsigned int flags,
 	long ret = -EINVAL;
 	int listener = -1;
 	struct file *listener_f = NULL;
+	bool sync_cpuid = false;
 
 	/* Validate flags. */
 	if (flags & ~SECCOMP_FILTER_FLAG_MASK)
@@ -2007,6 +2262,17 @@ static long seccomp_set_mode_filter(unsigned int flags,
 	if ((flags & SECCOMP_FILTER_FLAG_WAIT_KILLABLE_RECV) &&
 	    ((flags & SECCOMP_FILTER_FLAG_NEW_LISTENER) == 0))
 		return -EINVAL;
+
+	/*
+	 * CPUID filtering needs architecture support (-EINVAL), and the CPU
+	 * must be able to trap CPUID instructions (-EOPNOTSUPP).
+	 */
+	if (flags & SECCOMP_FILTER_FLAG_CPUID) {
+		if (!IS_ENABLED(CONFIG_HAVE_ARCH_SECCOMP_CPUID))
+			return -EINVAL;
+		if (!arch_seccomp_cpuid_supported())
+			return -EOPNOTSUPP;
+	}
 
 	/* Prepare the new filter before holding any locks. */
 	prepared = seccomp_prepare_user_filter(filter);
@@ -2053,10 +2319,28 @@ static long seccomp_set_mode_filter(unsigned int flags,
 	prepared = NULL;
 
 	seccomp_assign_mode(current, seccomp_mode, flags);
+	sync_cpuid = (flags & SECCOMP_FILTER_FLAG_TSYNC) &&
+		     seccomp_chain_has_cpuid(current->seccomp.filter);
 out:
 	spin_unlock_irq(&current->sighand->siglock);
 	if (flags & SECCOMP_FILTER_FLAG_TSYNC)
 		mutex_unlock(&current->signal->cred_guard_mutex);
+
+	/*
+	 * Synchronized threads that are running on other CPUs only start
+	 * trapping CPUID instructions after their next context switch, so
+	 * kick them now. This needs interrupts enabled.
+	 */
+	if (sync_cpuid) {
+		struct task_struct *thread;
+
+		rcu_read_lock();
+		for_each_thread(current, thread) {
+			if (thread != current)
+				arch_seccomp_cpuid_sync(thread);
+		}
+		rcu_read_unlock();
+	}
 out_put_fd:
 	if (flags & SECCOMP_FILTER_FLAG_NEW_LISTENER) {
 		if (ret) {
@@ -2296,6 +2580,8 @@ long seccomp_get_metadata(struct task_struct *task,
 
 	if (filter->log)
 		kmd.flags |= SECCOMP_FILTER_FLAG_LOG;
+	if (filter->cpuid)
+		kmd.flags |= SECCOMP_FILTER_FLAG_CPUID;
 
 	ret = size;
 	if (copy_to_user(data, &kmd, size))

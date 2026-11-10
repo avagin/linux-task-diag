@@ -25,6 +25,21 @@
 #define SECCOMP_FILTER_FLAG_TSYNC_ESRCH		(1UL << 4)
 /* Received notifications wait in killable state (only respond to fatal signals) */
 #define SECCOMP_FILTER_FLAG_WAIT_KILLABLE_RECV	(1UL << 5)
+/* Also run this filter for user-space CPUID instructions (x86 only) */
+#define SECCOMP_FILTER_FLAG_CPUID		(1UL << 6)
+
+/*
+ * Pseudo system call number reported in seccomp_data.nr when a filter
+ * installed with SECCOMP_FILTER_FLAG_CPUID is run for a CPUID instruction.
+ * seccomp_data.args[0] and seccomp_data.args[1] hold the EAX (leaf) and
+ * ECX (subleaf) input values, and seccomp_data.instruction_pointer holds
+ * the address of the CPUID instruction.
+ *
+ * Note that a task can also invoke a system call with this (invalid)
+ * number, so filters cannot tell the two apart. User notifications for
+ * CPUID instructions are marked with SECCOMP_NOTIF_FLAG_CPUID.
+ */
+#define SECCOMP_NR_CPUID			(-2)
 
 /*
  * All BPF programs must return a 32-bit value.
@@ -72,6 +87,9 @@ struct seccomp_notif_sizes {
 	__u16 seccomp_data;
 };
 
+/* Valid flags for struct seccomp_notif */
+#define SECCOMP_NOTIF_FLAG_CPUID	(1UL << 0) /* CPUID instruction */
+
 struct seccomp_notif {
 	__u64 id;
 	__u32 pid;
@@ -115,6 +133,32 @@ struct seccomp_notif_resp {
 	__u32 flags;
 };
 
+/**
+ * struct seccomp_notif_resp_cpuid - reply to a CPUID notification
+ * @id: The ID of the seccomp notification
+ * @flags: Must be zero
+ * @eax: Value of EAX after the emulated CPUID instruction
+ * @ebx: Value of EBX after the emulated CPUID instruction
+ * @ecx: Value of ECX after the emulated CPUID instruction
+ * @edx: Value of EDX after the emulated CPUID instruction
+ * @__reserved: Must be zero
+ *
+ * Replying with this structure completes the CPUID instruction with the
+ * given register values. To execute the CPUID instruction natively, reply
+ * with SECCOMP_IOCTL_NOTIF_SEND and SECCOMP_USER_NOTIF_FLAG_CONTINUE. To
+ * deny it (SIGSEGV is delivered), reply with SECCOMP_IOCTL_NOTIF_SEND and
+ * a non-zero error.
+ */
+struct seccomp_notif_resp_cpuid {
+	__u64 id;
+	__u32 flags;
+	__u32 eax;
+	__u32 ebx;
+	__u32 ecx;
+	__u32 edx;
+	__u32 __reserved;
+};
+
 #define SECCOMP_USER_NOTIF_FD_SYNC_WAKE_UP (1UL << 0)
 
 /* valid flags for seccomp_notif_addfd */
@@ -153,5 +197,7 @@ struct seccomp_notif_addfd {
 						struct seccomp_notif_addfd)
 
 #define SECCOMP_IOCTL_NOTIF_SET_FLAGS	SECCOMP_IOW(4, __u64)
+#define SECCOMP_IOCTL_NOTIF_SEND_CPUID	SECCOMP_IOW(5, \
+						struct seccomp_notif_resp_cpuid)
 
 #endif /* _UAPI_LINUX_SECCOMP_H */

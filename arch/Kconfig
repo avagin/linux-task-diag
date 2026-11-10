@@ -661,6 +661,18 @@ config HAVE_ARCH_SECCOMP_FILTER
 	    SECCOMP_ARCH_NATIVE_NR, SECCOMP_ARCH_NATIVE_NAME defined. If
 	    COMPAT is supported, have the SECCOMP_ARCH_COMPAT* defines too.
 
+config HAVE_ARCH_SECCOMP_CPUID
+	bool
+	depends on HAVE_ARCH_SECCOMP_FILTER
+	help
+	  An arch should select this symbol if it can trap user-space CPUID
+	  instructions and pass them to seccomp filters installed with
+	  SECCOMP_FILTER_FLAG_CPUID. It must provide:
+	  - arch_seccomp_cpuid_supported()
+	  - arch_seccomp_cpuid_enable()
+	  - arch_seccomp_cpuid_sync()
+	  - a trap handler that calls seccomp_filter_cpuid()
+
 config SECCOMP
 	prompt "Enable seccomp to safely execute untrusted bytecode"
 	def_bool y

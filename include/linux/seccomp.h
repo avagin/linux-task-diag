@@ -10,7 +10,8 @@
 					 SECCOMP_FILTER_FLAG_SPEC_ALLOW | \
 					 SECCOMP_FILTER_FLAG_NEW_LISTENER | \
 					 SECCOMP_FILTER_FLAG_TSYNC_ESRCH | \
-					 SECCOMP_FILTER_FLAG_WAIT_KILLABLE_RECV)
+					 SECCOMP_FILTER_FLAG_WAIT_KILLABLE_RECV | \
+					 SECCOMP_FILTER_FLAG_CPUID)
 
 /* sizeof() the first published struct seccomp_notif_addfd */
 #define SECCOMP_NOTIFY_ADDFD_SIZE_VER0 24
@@ -85,6 +86,48 @@ static inline void get_seccomp_filter(struct task_struct *tsk)
 	return;
 }
 #endif /* CONFIG_SECCOMP_FILTER */
+
+/**
+ * enum seccomp_cpuid_result - how to complete a trapped CPUID instruction
+ * @SECCOMP_CPUID_ALLOW: execute CPUID natively
+ * @SECCOMP_CPUID_EMULATE: complete CPUID with the returned register values
+ * @SECCOMP_CPUID_DENY: deny CPUID; the caller delivers SIGSEGV
+ * @SECCOMP_CPUID_RETRY: a signal is pending (SIGSYS for TRAP and KILL
+ *	actions, or a signal interrupted a user notification); leave the
+ *	registers unchanged so CPUID is re-executed if the task survives
+ */
+enum seccomp_cpuid_result {
+	SECCOMP_CPUID_ALLOW,
+	SECCOMP_CPUID_EMULATE,
+	SECCOMP_CPUID_DENY,
+	SECCOMP_CPUID_RETRY,
+};
+
+#if defined(CONFIG_SECCOMP_FILTER) && defined(CONFIG_HAVE_ARCH_SECCOMP_CPUID)
+extern enum seccomp_cpuid_result seccomp_filter_cpuid(u32 arch,
+						      unsigned long ip,
+						      u32 eax, u32 ecx,
+						      u32 regs[4]);
+
+/* Provided by architectures that select HAVE_ARCH_SECCOMP_CPUID */
+extern bool arch_seccomp_cpuid_supported(void);
+extern void arch_seccomp_cpuid_enable(struct task_struct *task);
+extern void arch_seccomp_cpuid_sync(struct task_struct *task);
+#else
+static inline enum seccomp_cpuid_result
+seccomp_filter_cpuid(u32 arch, unsigned long ip, u32 eax, u32 ecx, u32 regs[4])
+{
+	return SECCOMP_CPUID_DENY;
+}
+
+static inline bool arch_seccomp_cpuid_supported(void)
+{
+	return false;
+}
+
+static inline void arch_seccomp_cpuid_enable(struct task_struct *task) { }
+static inline void arch_seccomp_cpuid_sync(struct task_struct *task) { }
+#endif
 
 #if defined(CONFIG_SECCOMP_FILTER) && defined(CONFIG_CHECKPOINT_RESTORE)
 extern long seccomp_get_filter(struct task_struct *task,
