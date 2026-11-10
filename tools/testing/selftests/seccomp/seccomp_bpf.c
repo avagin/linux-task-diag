@@ -5304,4 +5304,585 @@ TEST_F(UPROBE, uprobe_default_block_with_syscall)
  * - verify that RET_LOG generates log messages
  */
 
+#ifdef __x86_64__
+#include <linux/audit.h>
+#include <ucontext.h>
+#include <asm/prctl.h>
+
+#ifndef SECCOMP_FILTER_FLAG_CPUID
+#define SECCOMP_FILTER_FLAG_CPUID	(1UL << 6)
+#endif
+
+#ifndef SECCOMP_NR_CPUID
+#define SECCOMP_NR_CPUID		(-2)
+#endif
+
+#ifndef SECCOMP_NOTIF_FLAG_CPUID
+#define SECCOMP_NOTIF_FLAG_CPUID	(1UL << 0)
+#endif
+
+#ifndef SECCOMP_IOCTL_NOTIF_SEND_CPUID
+struct seccomp_notif_resp_cpuid {
+	__u64 id;
+	__u32 flags;
+	__u32 eax;
+	__u32 ebx;
+	__u32 ecx;
+	__u32 edx;
+	__u32 __reserved;
+};
+#define SECCOMP_IOCTL_NOTIF_SEND_CPUID	SECCOMP_IOW(5, \
+						struct seccomp_notif_resp_cpuid)
+#endif
+
+#ifndef ARCH_SET_CPUID
+#define ARCH_SET_CPUID			0x1012
+#endif
+
+/* A hypervisor-range leaf that the C library is not expected to query. */
+#define TEST_CPUID_LEAF			0x4ffffff0
+#define TEST_CPUID_SUBLEAF		7
+#define CPUID_EXEC_TEST_ENV		"SECCOMP_CPUID_EXEC_TEST"
+
+static const unsigned int cpuid_emulated[4] = {
+	0x11111111, 0x22222222, 0x33333333, 0x44444444,
+};
+
+static inline void native_cpuid(unsigned int leaf, unsigned int subleaf,
+				unsigned int regs[4])
+{
+	asm volatile("cpuid"
+		     : "=a" (regs[0]), "=b" (regs[1]),
+		       "=c" (regs[2]), "=d" (regs[3])
+		     : "a" (leaf), "c" (subleaf));
+}
+
+/*
+ * Run with CPUID_EXEC_TEST_ENV set by cpuid_filter_survives_exec: execute
+ * the filtered CPUID leaf right after exec, before the test harness starts.
+ */
+static void __attribute__((constructor)) cpuid_exec_test(void)
+{
+	unsigned int regs[4];
+
+	if (!getenv(CPUID_EXEC_TEST_ENV))
+		return;
+
+	native_cpuid(TEST_CPUID_LEAF, 0, regs);
+	_exit(0);
+}
+
+/*
+ * Install a filter that returns @action for CPUID leaf @leaf, and
+ * SECCOMP_RET_ALLOW for everything else.
+ */
+static int cpuid_filter(unsigned int flags, __u32 leaf, __u32 action)
+{
+	struct sock_filter filter[] = {
+		BPF_STMT(BPF_LD|BPF_W|BPF_ABS,
+			 offsetof(struct seccomp_data, nr)),
+		BPF_JUMP(BPF_JMP|BPF_JEQ|BPF_K, (__u32)SECCOMP_NR_CPUID, 0, 3),
+		/* Low 32 bits of args[0] on little-endian x86. */
+		BPF_STMT(BPF_LD|BPF_W|BPF_ABS,
+			 offsetof(struct seccomp_data, args[0])),
+		BPF_JUMP(BPF_JMP|BPF_JEQ|BPF_K, leaf, 0, 1),
+		BPF_STMT(BPF_RET|BPF_K, action),
+		BPF_STMT(BPF_RET|BPF_K, SECCOMP_RET_ALLOW),
+	};
+	struct sock_fprog prog = {
+		.len = (unsigned short)ARRAY_SIZE(filter),
+		.filter = filter,
+	};
+
+	return seccomp(SECCOMP_SET_MODE_FILTER, flags, &prog);
+}
+
+/*
+ * Returns 0 if SECCOMP_FILTER_FLAG_CPUID is supported, or the errno from
+ * trying to install a CPUID filter (in a throwaway child process).
+ */
+static int cpuid_filter_support(void)
+{
+	int status;
+	pid_t pid;
+
+	pid = fork();
+	if (pid < 0)
+		return errno;
+	if (pid == 0) {
+		if (prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0))
+			_exit(errno);
+		if (cpuid_filter(SECCOMP_FILTER_FLAG_CPUID, 0,
+				 SECCOMP_RET_ALLOW))
+			_exit(errno);
+		_exit(0);
+	}
+	if (waitpid(pid, &status, 0) != pid || !WIFEXITED(status))
+		return ECHILD;
+	return WEXITSTATUS(status);
+}
+
+#define SKIP_IF_NO_CPUID_FILTER()					\
+	do {								\
+		int __err = cpuid_filter_support();			\
+									\
+		if (__err == EINVAL)					\
+			SKIP(return, "Kernel lacks SECCOMP_FILTER_FLAG_CPUID"); \
+		if (__err == EOPNOTSUPP)				\
+			SKIP(return, "CPU lacks CPUID faulting");	\
+		ASSERT_EQ(0, __err);					\
+	} while (0)
+
+/* Fork a child that runs the body and expect it to be killed by @sig. */
+#define EXPECT_CHILD_SIGNALED(sig, ...)					\
+	do {								\
+		int __status;						\
+		pid_t __pid = fork();					\
+									\
+		ASSERT_GE(__pid, 0);					\
+		if (__pid == 0) {					\
+			__VA_ARGS__;					\
+			_exit(0);					\
+		}							\
+		ASSERT_EQ(__pid, waitpid(__pid, &__status, 0));		\
+		EXPECT_TRUE(WIFSIGNALED(__status));			\
+		if (WIFSIGNALED(__status))				\
+			EXPECT_EQ(sig, WTERMSIG(__status));		\
+	} while (0)
+
+TEST(cpuid_filter_allow)
+{
+	unsigned int before[4], after[4];
+
+	SKIP_IF_NO_CPUID_FILTER();
+	ASSERT_EQ(0, prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0));
+
+	native_cpuid(0, 0, before);
+	ASSERT_EQ(0, cpuid_filter(SECCOMP_FILTER_FLAG_CPUID, 0,
+				  SECCOMP_RET_ALLOW));
+	/* Trapped, filtered and then executed natively. */
+	native_cpuid(0, 0, after);
+	EXPECT_EQ(0, memcmp(before, after, sizeof(before)));
+}
+
+TEST(cpuid_filter_errno_sigsegv)
+{
+	SKIP_IF_NO_CPUID_FILTER();
+
+	EXPECT_CHILD_SIGNALED(SIGSEGV, {
+		unsigned int regs[4];
+
+		if (prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0))
+			_exit(1);
+		if (cpuid_filter(SECCOMP_FILTER_FLAG_CPUID, TEST_CPUID_LEAF,
+				 SECCOMP_RET_ERRNO | EPERM))
+			_exit(1);
+		native_cpuid(TEST_CPUID_LEAF, 0, regs);
+	});
+}
+
+TEST(cpuid_filter_kill_process)
+{
+	SKIP_IF_NO_CPUID_FILTER();
+
+	EXPECT_CHILD_SIGNALED(SIGSYS, {
+		unsigned int regs[4];
+
+		if (prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0))
+			_exit(1);
+		if (cpuid_filter(SECCOMP_FILTER_FLAG_CPUID, TEST_CPUID_LEAF,
+				 SECCOMP_RET_KILL_PROCESS))
+			_exit(1);
+		native_cpuid(TEST_CPUID_LEAF, 0, regs);
+	});
+}
+
+static void *cpuid_kill_thread_fn(void *arg)
+{
+	unsigned int regs[4];
+
+	native_cpuid(TEST_CPUID_LEAF, 0, regs);
+	return (void *)1;	/* Not reached: the thread is killed. */
+}
+
+/* SECCOMP_RET_KILL_THREAD only kills the thread that executed CPUID. */
+TEST(cpuid_filter_kill_thread)
+{
+	int status;
+	pid_t pid;
+
+	SKIP_IF_NO_CPUID_FILTER();
+
+	pid = fork();
+	ASSERT_GE(pid, 0);
+	if (pid == 0) {
+		pthread_t thread;
+		void *ret = NULL;
+
+		if (prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0))
+			_exit(1);
+		if (cpuid_filter(SECCOMP_FILTER_FLAG_CPUID, TEST_CPUID_LEAF,
+				 SECCOMP_RET_KILL_THREAD))
+			_exit(1);
+		if (pthread_create(&thread, NULL, cpuid_kill_thread_fn, NULL))
+			_exit(1);
+		if (pthread_join(thread, &ret) || ret)
+			_exit(2);
+		_exit(0);
+	}
+	ASSERT_EQ(pid, waitpid(pid, &status, 0));
+	EXPECT_TRUE(WIFEXITED(status));
+	EXPECT_EQ(0, WEXITSTATUS(status));
+}
+
+static volatile sig_atomic_t cpuid_sigsys_count, cpuid_sigsegv_count;
+static volatile sig_atomic_t cpuid_sigsys_bad;
+
+/* Emulate the trapped CPUID instruction from the SIGSYS handler. */
+static void cpuid_sigsys_handler(int sig, siginfo_t *info, void *void_ctx)
+{
+	ucontext_t *ctx = void_ctx;
+	greg_t *gregs = ctx->uc_mcontext.gregs;
+
+	if (info->si_code != SYS_SECCOMP ||
+	    info->si_syscall != SECCOMP_NR_CPUID ||
+	    info->si_arch != AUDIT_ARCH_X86_64 ||
+	    info->si_errno != 0x42 ||
+	    info->si_call_addr != (void *)gregs[REG_RIP] ||
+	    (unsigned int)gregs[REG_RAX] != TEST_CPUID_LEAF)
+		cpuid_sigsys_bad = 1;
+
+	gregs[REG_RAX] = cpuid_emulated[0];
+	gregs[REG_RBX] = cpuid_emulated[1];
+	gregs[REG_RCX] = cpuid_emulated[2];
+	gregs[REG_RDX] = cpuid_emulated[3];
+	gregs[REG_RIP] += 2;	/* 0f a2 */
+	cpuid_sigsys_count++;
+}
+
+/* Skip a CPUID instruction that raised SIGSEGV. */
+static void cpuid_sigsegv_handler(int sig, siginfo_t *info, void *void_ctx)
+{
+	ucontext_t *ctx = void_ctx;
+
+	ctx->uc_mcontext.gregs[REG_RIP] += 2;
+	cpuid_sigsegv_count++;
+}
+
+static void cpuid_install_handlers(struct __test_metadata *_metadata)
+{
+	struct sigaction act = {};
+
+	act.sa_flags = SA_SIGINFO;
+	act.sa_sigaction = cpuid_sigsys_handler;
+	ASSERT_EQ(0, sigaction(SIGSYS, &act, NULL));
+	act.sa_sigaction = cpuid_sigsegv_handler;
+	ASSERT_EQ(0, sigaction(SIGSEGV, &act, NULL));
+}
+
+TEST(cpuid_filter_trap_emulate)
+{
+	unsigned int regs[4];
+
+	SKIP_IF_NO_CPUID_FILTER();
+	ASSERT_EQ(0, prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0));
+	cpuid_install_handlers(_metadata);
+
+	ASSERT_EQ(0, cpuid_filter(SECCOMP_FILTER_FLAG_CPUID, TEST_CPUID_LEAF,
+				  SECCOMP_RET_TRAP | 0x42));
+
+	native_cpuid(TEST_CPUID_LEAF, 0, regs);
+	EXPECT_EQ(1, cpuid_sigsys_count);
+	EXPECT_EQ(0, cpuid_sigsys_bad);
+	EXPECT_EQ(0, memcmp(regs, cpuid_emulated, sizeof(regs)));
+}
+
+/* ARCH_SET_CPUID takes precedence while set, and seccomp still applies after. */
+TEST(cpuid_filter_arch_prctl)
+{
+	unsigned int regs[4];
+
+	SKIP_IF_NO_CPUID_FILTER();
+	ASSERT_EQ(0, prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0));
+	cpuid_install_handlers(_metadata);
+
+	ASSERT_EQ(0, cpuid_filter(SECCOMP_FILTER_FLAG_CPUID, TEST_CPUID_LEAF,
+				  SECCOMP_RET_TRAP | 0x42));
+
+	ASSERT_EQ(0, syscall(__NR_arch_prctl, ARCH_SET_CPUID, 0));
+	native_cpuid(TEST_CPUID_LEAF, 0, regs);
+	EXPECT_EQ(0, cpuid_sigsys_count);
+	EXPECT_EQ(1, cpuid_sigsegv_count);
+
+	ASSERT_EQ(0, syscall(__NR_arch_prctl, ARCH_SET_CPUID, 1));
+	native_cpuid(TEST_CPUID_LEAF, 0, regs);
+	EXPECT_EQ(1, cpuid_sigsys_count);
+	EXPECT_EQ(1, cpuid_sigsegv_count);
+	EXPECT_EQ(0, memcmp(regs, cpuid_emulated, sizeof(regs)));
+}
+
+/* Filters installed without SECCOMP_FILTER_FLAG_CPUID never see CPUID. */
+TEST(cpuid_filter_flag_required)
+{
+	struct sock_filter filter[] = {
+		BPF_STMT(BPF_LD|BPF_W|BPF_ABS,
+			 offsetof(struct seccomp_data, nr)),
+		BPF_JUMP(BPF_JMP|BPF_JEQ|BPF_K, (__u32)SECCOMP_NR_CPUID, 0, 1),
+		BPF_STMT(BPF_RET|BPF_K, SECCOMP_RET_KILL_PROCESS),
+		BPF_STMT(BPF_RET|BPF_K, SECCOMP_RET_ALLOW),
+	};
+	struct sock_fprog prog = {
+		.len = (unsigned short)ARRAY_SIZE(filter),
+		.filter = filter,
+	};
+	unsigned int before[4], after[4];
+
+	SKIP_IF_NO_CPUID_FILTER();
+	ASSERT_EQ(0, prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0));
+
+	native_cpuid(0, 0, before);
+	ASSERT_EQ(0, seccomp(SECCOMP_SET_MODE_FILTER, 0, &prog));
+	ASSERT_EQ(0, cpuid_filter(SECCOMP_FILTER_FLAG_CPUID, 0,
+				  SECCOMP_RET_ALLOW));
+	native_cpuid(0, 0, after);
+	EXPECT_EQ(0, memcmp(before, after, sizeof(before)));
+}
+
+TEST(cpuid_filter_inherited_by_fork)
+{
+	SKIP_IF_NO_CPUID_FILTER();
+	ASSERT_EQ(0, prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0));
+	ASSERT_EQ(0, cpuid_filter(SECCOMP_FILTER_FLAG_CPUID, TEST_CPUID_LEAF,
+				  SECCOMP_RET_ERRNO | EPERM));
+
+	EXPECT_CHILD_SIGNALED(SIGSEGV, {
+		unsigned int regs[4];
+
+		native_cpuid(TEST_CPUID_LEAF, 0, regs);
+	});
+}
+
+/* Unlike ARCH_SET_CPUID, seccomp CPUID filtering is kept across execve(). */
+TEST(cpuid_filter_survives_exec)
+{
+	SKIP_IF_NO_CPUID_FILTER();
+	ASSERT_EQ(0, prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0));
+	ASSERT_EQ(0, cpuid_filter(SECCOMP_FILTER_FLAG_CPUID, TEST_CPUID_LEAF,
+				  SECCOMP_RET_ERRNO | EPERM));
+
+	EXPECT_CHILD_SIGNALED(SIGSEGV, {
+		char *argv[] = { "seccomp_bpf", NULL };
+		char *envp[] = { CPUID_EXEC_TEST_ENV "=1", NULL };
+
+		execve("/proc/self/exe", argv, envp);
+		_exit(3);
+	});
+}
+
+static void *cpuid_tsync_thread(void *arg)
+{
+	int fd = *(int *)arg;
+	unsigned int regs[4];
+	char c;
+
+	if (read(fd, &c, 1) != 1)
+		return NULL;
+	native_cpuid(TEST_CPUID_LEAF, 0, regs);
+	return NULL;
+}
+
+TEST(cpuid_filter_tsync)
+{
+	SKIP_IF_NO_CPUID_FILTER();
+
+	EXPECT_CHILD_SIGNALED(SIGSEGV, {
+		pthread_t thread;
+		int pipefd[2];
+
+		if (pipe(pipefd))
+			_exit(1);
+		if (pthread_create(&thread, NULL, cpuid_tsync_thread,
+				   &pipefd[0]))
+			_exit(1);
+		if (prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0))
+			_exit(1);
+		if (cpuid_filter(SECCOMP_FILTER_FLAG_CPUID |
+				 SECCOMP_FILTER_FLAG_TSYNC, TEST_CPUID_LEAF,
+				 SECCOMP_RET_ERRNO | EPERM))
+			_exit(1);
+		if (write(pipefd[1], "x", 1) != 1)
+			_exit(1);
+		pthread_join(thread, NULL);
+	});
+}
+
+static pid_t cpuid_notif_child(void)
+{
+	pid_t pid = fork();
+
+	if (pid == 0) {
+		unsigned int regs[4];
+
+		native_cpuid(TEST_CPUID_LEAF, TEST_CPUID_SUBLEAF, regs);
+		_exit(memcmp(regs, cpuid_emulated, sizeof(regs)) ? 1 : 0);
+	}
+	return pid;
+}
+
+TEST(cpuid_user_notif_emulate)
+{
+	struct seccomp_notif_resp_cpuid cresp = {};
+	struct seccomp_notif_resp resp = {};
+	struct seccomp_notif req = {};
+	struct seccomp_notif_addfd addfd = {};
+	int listener, status;
+	pid_t pid;
+
+	SKIP_IF_NO_CPUID_FILTER();
+	ASSERT_EQ(0, prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0));
+
+	listener = cpuid_filter(SECCOMP_FILTER_FLAG_CPUID |
+				SECCOMP_FILTER_FLAG_NEW_LISTENER,
+				TEST_CPUID_LEAF, SECCOMP_RET_USER_NOTIF);
+	ASSERT_GE(listener, 0);
+
+	pid = cpuid_notif_child();
+	ASSERT_GE(pid, 0);
+
+	ASSERT_EQ(0, ioctl(listener, SECCOMP_IOCTL_NOTIF_RECV, &req));
+	EXPECT_EQ(pid, req.pid);
+	EXPECT_EQ(SECCOMP_NOTIF_FLAG_CPUID, req.flags);
+	EXPECT_EQ(SECCOMP_NR_CPUID, req.data.nr);
+	EXPECT_EQ(AUDIT_ARCH_X86_64, req.data.arch);
+	EXPECT_EQ(TEST_CPUID_LEAF, req.data.args[0]);
+	EXPECT_EQ(TEST_CPUID_SUBLEAF, req.data.args[1]);
+
+	/* A CPUID instruction has no return value to set. */
+	resp.id = req.id;
+	resp.val = 1;
+	EXPECT_EQ(-1, ioctl(listener, SECCOMP_IOCTL_NOTIF_SEND, &resp));
+	EXPECT_EQ(EINVAL, errno);
+
+	/* There is no system call to install a file descriptor for. */
+	addfd.id = req.id;
+	addfd.srcfd = listener;
+	EXPECT_EQ(-1, ioctl(listener, SECCOMP_IOCTL_NOTIF_ADDFD, &addfd));
+	EXPECT_EQ(EINVAL, errno);
+
+	cresp.id = req.id;
+	cresp.eax = cpuid_emulated[0];
+	cresp.ebx = cpuid_emulated[1];
+	cresp.ecx = cpuid_emulated[2];
+	cresp.edx = cpuid_emulated[3];
+
+	/* Reserved fields must be zero. */
+	cresp.__reserved = 1;
+	EXPECT_EQ(-1, ioctl(listener, SECCOMP_IOCTL_NOTIF_SEND_CPUID, &cresp));
+	EXPECT_EQ(EINVAL, errno);
+	cresp.__reserved = 0;
+
+	EXPECT_EQ(0, ioctl(listener, SECCOMP_IOCTL_NOTIF_SEND_CPUID, &cresp));
+	/* Exactly one reply. */
+	EXPECT_EQ(-1, ioctl(listener, SECCOMP_IOCTL_NOTIF_SEND_CPUID, &cresp));
+
+	ASSERT_EQ(pid, waitpid(pid, &status, 0));
+	EXPECT_TRUE(WIFEXITED(status));
+	EXPECT_EQ(0, WEXITSTATUS(status));
+}
+
+TEST(cpuid_user_notif_continue_deny)
+{
+	struct seccomp_notif_resp resp = {};
+	struct seccomp_notif req = {};
+	unsigned int native[4];
+	int listener, status;
+	pid_t pid;
+
+	SKIP_IF_NO_CPUID_FILTER();
+	native_cpuid(TEST_CPUID_LEAF, TEST_CPUID_SUBLEAF, native);
+	ASSERT_EQ(0, prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0));
+
+	listener = cpuid_filter(SECCOMP_FILTER_FLAG_CPUID |
+				SECCOMP_FILTER_FLAG_NEW_LISTENER,
+				TEST_CPUID_LEAF, SECCOMP_RET_USER_NOTIF);
+	ASSERT_GE(listener, 0);
+
+	/* SECCOMP_USER_NOTIF_FLAG_CONTINUE executes CPUID natively. */
+	pid = fork();
+	ASSERT_GE(pid, 0);
+	if (pid == 0) {
+		unsigned int regs[4];
+
+		native_cpuid(TEST_CPUID_LEAF, TEST_CPUID_SUBLEAF, regs);
+		_exit(memcmp(regs, native, sizeof(regs)) ? 1 : 0);
+	}
+	ASSERT_EQ(0, ioctl(listener, SECCOMP_IOCTL_NOTIF_RECV, &req));
+	resp.id = req.id;
+	resp.flags = SECCOMP_USER_NOTIF_FLAG_CONTINUE;
+	EXPECT_EQ(0, ioctl(listener, SECCOMP_IOCTL_NOTIF_SEND, &resp));
+	ASSERT_EQ(pid, waitpid(pid, &status, 0));
+	EXPECT_TRUE(WIFEXITED(status));
+	EXPECT_EQ(0, WEXITSTATUS(status));
+
+	/* An error denies the instruction with SIGSEGV. */
+	pid = cpuid_notif_child();
+	ASSERT_GE(pid, 0);
+	memset(&req, 0, sizeof(req));
+	ASSERT_EQ(0, ioctl(listener, SECCOMP_IOCTL_NOTIF_RECV, &req));
+	memset(&resp, 0, sizeof(resp));
+	resp.id = req.id;
+	resp.error = -EPERM;
+	EXPECT_EQ(0, ioctl(listener, SECCOMP_IOCTL_NOTIF_SEND, &resp));
+	ASSERT_EQ(pid, waitpid(pid, &status, 0));
+	EXPECT_TRUE(WIFSIGNALED(status));
+	if (WIFSIGNALED(status))
+		EXPECT_EQ(SIGSEGV, WTERMSIG(status));
+}
+
+TEST(cpuid_filter_get_metadata)
+{
+	struct seccomp_metadata md = {};
+	int pipefd[2];
+	pid_t pid;
+	long ret;
+	char buf;
+
+	if (geteuid())
+		SKIP(return, "get_metadata requires real root");
+	SKIP_IF_NO_CPUID_FILTER();
+	ASSERT_EQ(0, pipe(pipefd));
+
+	pid = fork();
+	ASSERT_GE(pid, 0);
+	if (pid == 0) {
+		if (prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) ||
+		    cpuid_filter(SECCOMP_FILTER_FLAG_CPUID |
+				 SECCOMP_FILTER_FLAG_LOG,
+				 TEST_CPUID_LEAF, SECCOMP_RET_ALLOW))
+			_exit(1);
+		if (write(pipefd[1], "1", 1) != 1)
+			_exit(1);
+		while (1)
+			pause();
+	}
+
+	ASSERT_EQ(0, close(pipefd[1]));
+	ASSERT_EQ(1, read(pipefd[0], &buf, 1));
+	ASSERT_EQ(0, ptrace(PTRACE_ATTACH, pid));
+	ASSERT_EQ(pid, waitpid(pid, NULL, 0));
+
+	/* Past here must not use ASSERT or child process is never killed. */
+	md.filter_off = 0;
+	ret = ptrace(PTRACE_SECCOMP_GET_METADATA, pid, sizeof(md), &md);
+	EXPECT_EQ(sizeof(md), ret) {
+		if (errno == EINVAL)
+			SKIP(goto out, "Kernel does not support PTRACE_SECCOMP_GET_METADATA");
+	}
+	EXPECT_EQ(SECCOMP_FILTER_FLAG_CPUID | SECCOMP_FILTER_FLAG_LOG,
+		  md.flags);
+out:
+	kill(pid, SIGKILL);
+}
+#endif /* __x86_64__ */
+
 TEST_HARNESS_MAIN
