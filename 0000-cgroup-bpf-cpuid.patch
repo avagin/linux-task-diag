@@ -1,0 +1,105 @@
+From f42d658be551685bae733a5cbf4ea921d23a4453 Mon Sep 17 00:00:00 2001
+From: Andrei Vagin <avagin@google.com>
+Date: Tue, 10 Nov 2026 19:43:39 +0000
+Subject: [PATCH 0/7] bpf, x86: Introduce BPF_CGROUP_CPUID for cgroup CPUID
+ virtualization
+
+User-space applications and runtimes on x86 execute the unprivileged CPUID
+instruction directly to probe CPU features, cache geometry, topology, and
+vendor/model information (for example, in glibc IFUNC resolvers, language
+runtimes, and cryptographic libraries).
+
+In containerized environments, exposing raw host CPUID leaves creates
+portability and isolation challenges. In particular, live-migrating
+containers across hosts with heterogeneous CPU generations (e.g., via CRIU)
+requires restricting applications to a common baseline feature set so they
+do not bind to instructions unavailable on a migration target. Currently,
+Linux provides arch_prctl(ARCH_SET_CPUID, 0) to enable hardware CPUID
+faulting per thread and deliver SIGSEGV on user-space CPUID execution,
+which requires each process or a user-space monitor to trap and emulate
+SIGSEGV signals rather than transparently filtering CPUID at the container
+boundary.
+
+This series introduces a new x86-specific cgroup BPF attach type,
+BPF_CGROUP_CPUID (reusing BPF_PROG_TYPE_CGROUP_DEVICE, exposed in libbpf as
+SEC("cgroup/cpuid")), allowing cgroup BPF programs to customize or filter
+user-space CPUID results for all tasks in a cgroup hierarchy.
+
+Design overview:
+
+- Context and return value:
+  BPF programs receive struct bpf_cpuid containing read-only input
+  registers (eax_in, ecx_in) and read-write output registers (eax, ebx,
+  ecx, edx) pre-populated with native cpuid_count() output. Returning 1
+  allows the instruction and writes the (potentially modified) output
+  registers back to user space while advancing RIP past CPUID; returning 0
+  denies the instruction and delivers SIGSEGV via the normal #GP(0) path.
+  Hierarchical attachment (BPF_F_ALLOW_MULTI / BPF_F_ALLOW_OVERRIDE) is
+  supported, with each program in the effective array observing register
+  modifications made by earlier programs.
+
+- Hardware CPUID faulting management:
+  Attaching BPF_CGROUP_CPUID requires X86_FEATURE_CPUID_FAULT (Intel
+  MSR_MISC_FEATURES_ENABLES or AMD MSR_K7_HWCR CpuidUserDis) and returns
+  -EOPNOTSUPP otherwise. Per-CPU faulting state is shadowed in
+  msr_misc_features_shadow on both Intel and AMD to avoid redundant MSR
+  writes, and is synchronized across context switches, BPF attach/detach,
+  and cgroup task migration (CGROUP_TASK_MIGRATED). When no
+  BPF_CGROUP_CPUID programs are attached globally, context-switch checks
+  are bypassed via the cgroup_bpf_enabled(CGROUP_CPUID) static key.
+  Per-thread arch_prctl(ARCH_SET_CPUID, 0) (TIF_NOCPUID) retains
+  precedence and continues to deliver SIGSEGV.
+
+- Architecture scoping:
+  CGROUP_CPUID is guarded by CONFIG_X86 so non-x86 architectures do not
+  incur additional entries in struct cgroup_bpf.
+
+Patch organization:
+  Patch 1 avoids redundant MSR writes in set_cpuid_faulting() by tracking
+          MSR_MISC_FEATURES_ENABLES_CPUID_FAULT in msr_misc_features_shadow
+          on both Intel and AMD.
+  Patch 2 adds the BPF_CGROUP_CPUID UAPI, verifier context access rules,
+          BTF validation, and cgroup BPF execution helper.
+  Patch 3 wires up x86 CPUID faulting state synchronization and #GP(0)
+          user-mode CPUID trap emulation.
+  Patches 4-6 sync tools UAPI headers and add libbpf and bpftool support.
+  Patch 7 adds BPF selftests covering register customization, multi-program
+          chaining, cgroup migration, ARCH_SET_CPUID interaction, SIGSEGV
+          on deny, and detach restoration.
+
+Andrei Vagin (7):
+  x86/process: Avoid redundant MSR writes in set_cpuid_faulting()
+  bpf: Add BPF_CGROUP_CPUID attach type
+  x86, bpf: Wire up CPUID faulting and #GP emulation for
+    BPF_CGROUP_CPUID
+  tools/include: Sync uapi/linux/bpf.h for BPF_CGROUP_CPUID
+  libbpf: Add support for BPF_CGROUP_CPUID
+  bpftool: Add support for cgroup_cpuid attach type
+  selftests/bpf: Add selftests for BPF_CGROUP_CPUID
+
+ arch/x86/kernel/cpu/amd.c                     |   2 +
+ arch/x86/kernel/process.c                     |  54 +++++--
+ arch/x86/kernel/process.h                     |   4 +-
+ arch/x86/kernel/traps.c                       |  46 ++++++
+ include/linux/bpf-cgroup-defs.h               |   3 +
+ include/linux/bpf-cgroup.h                    |  32 ++++
+ include/uapi/linux/bpf.h                      |  10 ++
+ kernel/bpf/btf.c                              |  13 ++
+ kernel/bpf/cgroup.c                           |  94 +++++++++++
+ kernel/bpf/syscall.c                          |  21 +++
+ tools/bpf/bpftool/cgroup.c                    |   3 +-
+ tools/bpf/bpftool/common.c                    |   1 +
+ tools/include/uapi/linux/bpf.h                |  10 ++
+ tools/lib/bpf/bpf.c                           |   1 +
+ tools/lib/bpf/libbpf.c                        |   2 +
+ .../selftests/bpf/prog_tests/cgroup_cpuid.c   | 153 ++++++++++++++++++
+ .../selftests/bpf/progs/cpuid_cgroup.c        |  34 ++++
+ 17 files changed, 472 insertions(+), 11 deletions(-)
+ create mode 100644 tools/testing/selftests/bpf/prog_tests/cgroup_cpuid.c
+ create mode 100644 tools/testing/selftests/bpf/progs/cpuid_cgroup.c
+
+
+base-commit: a90ee4305c4a5df72c11b31dacfdc76e00fcf78a
+-- 
+2.56.0.611.g1030f0b940-goog
+
