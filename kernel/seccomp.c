@@ -1161,28 +1161,35 @@ static bool should_sleep_killable(struct seccomp_filter *match,
 	return match->wait_killable_recv && n->state >= SECCOMP_NOTIFY_SENT;
 }
 
-static int seccomp_do_user_notification(int this_syscall,
-					struct seccomp_filter *match,
-					const struct seccomp_data *sd)
+/*
+ * Queue the notification @n for @sd on @match and wait for a reply.
+ *
+ * Returns the error from the reply. If no reply was received, @n->val
+ * and @n->flags are zero, and the return value is -ENOSYS if there is no
+ * listener, or the error returned by the interrupted wait otherwise.
+ * @replied tells whether a reply was received.
+ */
+static int __seccomp_user_notify(struct seccomp_filter *match,
+				 const struct seccomp_data *sd,
+				 struct seccomp_knotif *n, bool *replied)
 {
 	int err;
-	u32 flags = 0;
-	long ret = 0;
-	struct seccomp_knotif n = {};
 	struct seccomp_kaddfd *addfd, *tmp;
+
+	*replied = false;
 
 	mutex_lock(&match->notify_lock);
 	err = -ENOSYS;
 	if (!match->notif)
 		goto out;
 
-	n.task = current;
-	n.state = SECCOMP_NOTIFY_INIT;
-	n.data = sd;
-	n.id = seccomp_next_notify_id(match);
-	init_completion(&n.ready);
-	list_add_tail(&n.list, &match->notif->notifications);
-	INIT_LIST_HEAD(&n.addfd);
+	n->task = current;
+	n->state = SECCOMP_NOTIFY_INIT;
+	n->data = sd;
+	n->id = seccomp_next_notify_id(match);
+	init_completion(&n->ready);
+	list_add_tail(&n->list, &match->notif->notifications);
+	INIT_LIST_HEAD(&n->addfd);
 
 	atomic_inc(&match->notif->requests);
 	if (match->notif->flags & SECCOMP_USER_NOTIF_FD_SYNC_WAKE_UP)
@@ -1194,13 +1201,13 @@ static int seccomp_do_user_notification(int this_syscall,
 	 * This is where we wait for a reply from userspace.
 	 */
 	do {
-		bool wait_killable = should_sleep_killable(match, &n);
+		bool wait_killable = should_sleep_killable(match, n);
 
 		mutex_unlock(&match->notify_lock);
 		if (wait_killable)
-			err = wait_for_completion_killable(&n.ready);
+			err = wait_for_completion_killable(&n->ready);
 		else
-			err = wait_for_completion_interruptible(&n.ready);
+			err = wait_for_completion_interruptible(&n->ready);
 		mutex_lock(&match->notify_lock);
 
 		if (err != 0) {
@@ -1208,25 +1215,30 @@ static int seccomp_do_user_notification(int this_syscall,
 			 * Check to see whether we should switch to wait
 			 * killable. Only return the interrupted error if not.
 			 */
-			if (!(!wait_killable && should_sleep_killable(match, &n)))
+			if (!(!wait_killable && should_sleep_killable(match, n)))
 				goto interrupted;
 		}
 
-		addfd = list_first_entry_or_null(&n.addfd,
+		addfd = list_first_entry_or_null(&n->addfd,
 						 struct seccomp_kaddfd, list);
 		/* Check if we were woken up by a addfd message */
 		if (addfd)
-			seccomp_handle_addfd(addfd, &n);
+			seccomp_handle_addfd(addfd, n);
 
-	}  while (n.state != SECCOMP_NOTIFY_REPLIED);
+	}  while (n->state != SECCOMP_NOTIFY_REPLIED);
 
-	ret = n.val;
-	err = n.error;
-	flags = n.flags;
+	err = n->error;
+	*replied = true;
+	goto cleanup;
 
 interrupted:
+	/* Ignore a reply that raced with the interruption. */
+	n->val = 0;
+	n->flags = 0;
+
+cleanup:
 	/* If there were any pending addfd calls, clear them out */
-	list_for_each_entry_safe(addfd, tmp, &n.addfd, list) {
+	list_for_each_entry_safe(addfd, tmp, &n->addfd, list) {
 		/* The process went away before we got a chance to handle it */
 		addfd->ret = -ESRCH;
 		list_del_init(&addfd->list);
@@ -1244,16 +1256,28 @@ interrupted:
 	 * keep track of the notif itself and make sure they match here.
 	 */
 	if (match->notif)
-		list_del(&n.list);
+		list_del(&n->list);
 out:
 	mutex_unlock(&match->notify_lock);
+	return err;
+}
+
+static int seccomp_do_user_notification(int this_syscall,
+					struct seccomp_filter *match,
+					const struct seccomp_data *sd)
+{
+	struct seccomp_knotif n = {};
+	bool replied;
+	int err;
+
+	err = __seccomp_user_notify(match, sd, &n, &replied);
 
 	/* Userspace requests to continue the syscall. */
-	if (flags & SECCOMP_USER_NOTIF_FLAG_CONTINUE)
+	if (n.flags & SECCOMP_USER_NOTIF_FLAG_CONTINUE)
 		return 0;
 
 	syscall_set_return_value(current, current_pt_regs(),
-				 err, ret);
+				 err, n.val);
 	return -1;
 }
 
