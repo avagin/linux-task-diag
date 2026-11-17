@@ -267,6 +267,11 @@ static int __restore_fpregs_from_user(void __user *buf, u64 task_xfeatures,
 		/* Restore enabled features only. */
 		xrestore_mask &= task_xfeatures;
 		init_bv = task_xfeatures & ~xrestore_mask;
+
+		/* The previous task's state can linger in disabled features. */
+		if (test_thread_flag(TIF_NEED_FPU_LOAD))
+			init_bv |= fpu_user_cfg.max_features & ~task_xfeatures;
+
 		if (likely(!fx_only))
 			ret = xrstor_from_user_sigframe(buf, xrestore_mask);
 		else
