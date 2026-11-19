@@ -93,7 +93,8 @@ static inline void xrstor(struct xsave_buffer *xbuf, uint64_t rfbm)
 	uint32_t rfbm_lo = rfbm;
 
 	asm volatile("xrstor (%%rdi)"
-		     : : "D" (xbuf), "a" (rfbm_lo), "d" (rfbm_hi));
+		     : : "D" (xbuf), "a" (rfbm_lo), "d" (rfbm_hi)
+		     : "memory");
 }
 
 static inline uint64_t xgetbv(uint32_t index)
